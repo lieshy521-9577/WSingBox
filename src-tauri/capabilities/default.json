@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for SingBox Client",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "shell:allow-execute",
+    "shell:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize"
+  ]
+}
