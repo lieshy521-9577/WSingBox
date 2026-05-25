@@ -88,4 +88,4 @@ The client automatically fixes older config formats for sing-box 1.12.0:
 
 ## License
 
-LGPL-3.0
+MIT
