@@ -48,6 +48,31 @@ export interface RuleSetInfo {
   url: string;
 }
 
+export interface AppSettings {
+  tun_enabled: boolean;
+  mixed_listen: string;
+  mixed_port: number;
+  tun_interface_name: string;
+  tun_mtu: number;
+  tun_stack: string;
+  tun_auto_route: boolean;
+  tun_strict_route: boolean;
+  tun_sniff: boolean;
+  tun_sniff_override_destination: boolean;
+  tun_address: string[];
+  dns_final: string;
+  dns_strategy: string;
+  dns_servers: Record<string, unknown>[];
+}
+
+export interface ConfigProfile {
+  id: string;
+  name: string;
+  source_path: string;
+  created_at: number;
+  updated_at: number;
+}
+
 /// Application state
 export interface AppState {
   nodes: ProxyNode[];

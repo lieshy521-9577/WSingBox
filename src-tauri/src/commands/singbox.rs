@@ -1,6 +1,12 @@
+use std::fs;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Start sing-box core process with elevation (admin privileges for TUN)
 #[tauri::command]
@@ -8,33 +14,26 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     let config_dir = get_config_dir();
     let config_path = format!("{}\\config.json", config_dir);
 
-    // Check if config file exists
     if !std::path::Path::new(&config_path).exists() {
         return Err("Configuration file not found. Please import a config or add nodes first.".to_string());
     }
 
-    // Find sing-box binary
     let singbox_path = find_singbox_binary(&app_handle)?;
 
-    // Kill any existing sing-box process first
-    Command::new("taskkill")
+    hidden_command("taskkill")
         .args(["/F", "/IM", "sing-box.exe"])
         .output()
         .ok();
 
-    // Wait for process to terminate
     thread::sleep(Duration::from_millis(500));
 
-    // Start sing-box with admin elevation using PowerShell
-    // This triggers a UAC prompt for the user
-    // Note: PowerShell single-quoted strings treat backslashes literally, no escaping needed
     let ps_command = format!(
         "Start-Process -FilePath '{}' -ArgumentList 'run','-c','{}' -Verb RunAs -WindowStyle Hidden",
         singbox_path,
         config_path
     );
 
-    let result = Command::new("powershell")
+    let result = hidden_command("powershell")
         .args(["-Command", &ps_command])
         .output()
         .map_err(|e| format!("Failed to start sing-box: {}", e))?;
@@ -44,11 +43,9 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
         return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
     }
 
-    // Wait for sing-box to initialize
     thread::sleep(Duration::from_secs(2));
 
-    // Verify sing-box is running
-    let check = Command::new("tasklist")
+    let check = hidden_command("tasklist")
         .args(["/FI", "IMAGENAME eq sing-box.exe"])
         .output()
         .map_err(|e| format!("Failed to verify sing-box status: {}", e))?;
@@ -58,8 +55,8 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
         return Err("sing-box failed to start. Check if the configuration is correct.".to_string());
     }
 
-    // Set system proxy to the mixed inbound port
-    set_system_proxy_internal("127.0.0.1", 7890)?;
+    let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path)?;
+    set_system_proxy_internal(&proxy_host, proxy_port)?;
 
     Ok("sing-box started successfully with admin privileges".to_string())
 }
@@ -67,30 +64,27 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 /// Stop sing-box core process and clear system proxy
 #[tauri::command]
 pub async fn stop_singbox() -> Result<String, String> {
-    // Clear system proxy first
+    cleanup_before_exit();
+    Ok("sing-box stopped".to_string())
+}
+
+pub fn cleanup_before_exit() {
     clear_system_proxy_internal().ok();
 
-    // On Windows, use taskkill to terminate sing-box (works for elevated processes too)
-    let output = Command::new("taskkill")
+    let output = hidden_command("taskkill")
         .args(["/F", "/IM", "sing-box.exe"])
-        .output()
-        .map_err(|e| format!("Failed to stop sing-box: {}", e))?;
+        .output();
 
-    if output.status.success() {
-        Ok("sing-box stopped successfully".to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Not running is also considered success
-        if stderr.contains("not found") || stderr.contains("没有找到") {
-            Ok("sing-box is not running".to_string())
-        } else {
-            // Try elevated taskkill
-            let ps_cmd = "Stop-Process -Name 'sing-box' -Force -ErrorAction SilentlyContinue";
-            Command::new("powershell")
-                .args(["-Command", ps_cmd])
-                .output()
-                .ok();
-            Ok("sing-box stopped".to_string())
+    if let Ok(output) = output {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.contains("not found") && !stderr.contains("没有找到") {
+                let ps_cmd = "Stop-Process -Name 'sing-box' -Force -ErrorAction SilentlyContinue";
+                hidden_command("powershell")
+                    .args(["-Command", ps_cmd])
+                    .output()
+                    .ok();
+            }
         }
     }
 }
@@ -98,7 +92,7 @@ pub async fn stop_singbox() -> Result<String, String> {
 /// Check if sing-box is currently running
 #[tauri::command]
 pub async fn get_singbox_status() -> Result<bool, String> {
-    let output = Command::new("tasklist")
+    let output = hidden_command("tasklist")
         .args(["/FI", "IMAGENAME eq sing-box.exe"])
         .output()
         .map_err(|e| format!("Failed to check status: {}", e))?;
@@ -107,11 +101,10 @@ pub async fn get_singbox_status() -> Result<bool, String> {
     Ok(stdout.contains("sing-box.exe"))
 }
 
-/// Internal helper: set system proxy
 fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
     let proxy_addr = format!("{}:{}", host, port);
 
-    Command::new("reg")
+    hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -123,7 +116,7 @@ fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
         .output()
         .map_err(|e| format!("Failed to enable proxy: {}", e))?;
 
-    Command::new("reg")
+    hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -135,8 +128,7 @@ fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
         .output()
         .map_err(|e| format!("Failed to set proxy server: {}", e))?;
 
-    // Set bypass list for local addresses
-    Command::new("reg")
+    hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -152,9 +144,8 @@ fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// Internal helper: clear system proxy
 fn clear_system_proxy_internal() -> Result<(), String> {
-    Command::new("reg")
+    hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -170,9 +161,8 @@ fn clear_system_proxy_internal() -> Result<(), String> {
     Ok(())
 }
 
-/// Notify Windows that internet settings have changed
 fn notify_internet_settings_change() {
-    Command::new("powershell")
+    hidden_command("powershell")
         .args([
             "-Command",
             r#"
@@ -194,15 +184,11 @@ fn notify_internet_settings_change() {
         .ok();
 }
 
-/// Find sing-box binary in multiple locations
 fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
 
-    // 1. Check bin/ directory relative to the executable
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            // In dev mode: project_root/src-tauri/target/debug/
-            // We want: project_root/bin/sing-box.exe
             let candidates = vec![
                 exe_dir.join("sing-box.exe"),
                 exe_dir.join("bin").join("sing-box.exe"),
@@ -212,11 +198,11 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
 
             for candidate in candidates {
                 if candidate.exists() {
-                    let path = candidate.canonicalize()
+                    let path = candidate
+                        .canonicalize()
                         .unwrap_or(candidate)
                         .to_string_lossy()
                         .to_string();
-                    // Strip Windows extended-length path prefix \\?\
                     let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_string();
                     return Ok(path);
                 }
@@ -224,7 +210,6 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
         }
     }
 
-    // 2. Check app resource directory (for bundled release)
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
         let resource_bin = resource_dir.join("bin").join("sing-box.exe");
         if resource_bin.exists() {
@@ -232,8 +217,7 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
         }
     }
 
-    // 3. Check if in PATH
-    if let Ok(output) = Command::new("where").arg("sing-box").output() {
+    if let Ok(output) = hidden_command("where").arg("sing-box").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
@@ -242,7 +226,6 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
         }
     }
 
-    // 4. Hardcoded fallback for development
     let dev_path = std::path::PathBuf::from(r"C:\_dCode\SingBox\bin\sing-box.exe");
     if dev_path.exists() {
         return Ok(dev_path.to_string_lossy().to_string());
@@ -251,9 +234,45 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
     Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
 }
 
+fn hidden_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 fn get_config_dir() -> String {
     let home = dirs::home_dir().unwrap_or_default();
     let config_dir = home.join(".singbox-client");
     std::fs::create_dir_all(&config_dir).ok();
     config_dir.to_string_lossy().to_string()
+}
+
+fn get_mixed_inbound_endpoint(config_path: &str) -> Result<(String, u16), String> {
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config for proxy settings: {}", e))?;
+    let config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config for proxy settings: {}", e))?;
+
+    let mixed = config
+        .get("inbounds")
+        .and_then(|v| v.as_array())
+        .and_then(|inbounds| {
+            inbounds.iter().find(|ib| {
+                ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed"
+            })
+        })
+        .ok_or("No mixed inbound found in current config".to_string())?;
+
+    let host = mixed
+        .get("listen")
+        .and_then(|v| v.as_str())
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let port = mixed
+        .get("listen_port")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(7890) as u16;
+
+    Ok((host, port))
 }

@@ -1,17 +1,31 @@
-import { Minus, Square, X } from "lucide-react";
+import { Minus, Square, X, Sun, Moon } from "lucide-react";
+import { Theme } from "../hooks/useTheme";
 
-function TitleBar() {
+interface TitleBarProps {
+  theme: Theme;
+  onToggleTheme: () => void;
+}
+
+function TitleBar({ theme, onToggleTheme }: TitleBarProps) {
   return (
     <div
       data-tauri-drag-region
-      className="h-8 flex items-center justify-between bg-dark-950 border-b border-dark-800 px-3"
+      className="h-8 flex items-center justify-between bg-titlebar border-b border-border px-3"
     >
-      <span className="text-xs text-dark-200 font-medium">SingBox Client</span>
+      <span className="text-xs text-content-secondary font-medium">SingBox Client</span>
       <div className="flex items-center gap-1">
+        {/* Theme toggle */}
         <button
-          className="w-6 h-6 flex items-center justify-center rounded hover:bg-dark-700 text-dark-200"
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-elevated text-content-muted hover:text-content transition-colors"
+          onClick={onToggleTheme}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+        </button>
+        <div className="w-px h-3 bg-border mx-1" />
+        <button
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-elevated text-content-secondary"
           onClick={() => {
-            // Tauri window minimize
             import("@tauri-apps/api/window").then((m) =>
               m.getCurrentWindow().minimize()
             );
@@ -20,7 +34,7 @@ function TitleBar() {
           <Minus size={14} />
         </button>
         <button
-          className="w-6 h-6 flex items-center justify-center rounded hover:bg-dark-700 text-dark-200"
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-elevated text-content-secondary"
           onClick={() => {
             import("@tauri-apps/api/window").then((m) =>
               m.getCurrentWindow().toggleMaximize()
@@ -30,7 +44,7 @@ function TitleBar() {
           <Square size={11} />
         </button>
         <button
-          className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-600 text-dark-200"
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-600 text-content-secondary hover:text-white"
           onClick={() => {
             import("@tauri-apps/api/window").then((m) =>
               m.getCurrentWindow().close()

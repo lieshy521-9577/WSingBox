@@ -2,6 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light theme (default) */
+:root {
+  --color-bg-base: 249 250 251;       /* gray-50 */
+  --color-bg-surface: 255 255 255;    /* white */
+  --color-bg-elevated: 243 244 246;   /* gray-100 */
+  --color-bg-muted: 229 231 235;      /* gray-200 */
+  --color-bg-subtle: 209 213 219;     /* gray-300 */
+
+  --color-border: 229 231 235;        /* gray-200 */
+  --color-border-muted: 243 244 246;  /* gray-100 */
+
+  --color-text-primary: 17 24 39;     /* gray-900 */
+  --color-text-secondary: 75 85 99;   /* gray-600 */
+  --color-text-muted: 156 163 175;    /* gray-400 */
+  --color-text-inverse: 255 255 255;  /* white */
+
+  --color-titlebar: 255 255 255;      /* white */
+  --color-sidebar: 248 250 252;       /* slate-50 */
+  --color-card: 255 255 255;          /* white */
+  --color-card-hover: 249 250 251;    /* gray-50 */
+
+  --scrollbar-thumb: 203 213 225;     /* slate-300 */
+  --scrollbar-hover: 148 163 184;     /* slate-400 */
+}
+
+/* Dark theme */
+.dark {
+  --color-bg-base: 15 23 42;          /* slate-900 */
+  --color-bg-surface: 23 32 51;       /* custom dark-850 */
+  --color-bg-elevated: 30 41 59;      /* slate-800 */
+  --color-bg-muted: 51 65 85;         /* slate-700 */
+  --color-bg-subtle: 71 85 105;       /* slate-600 */
+
+  --color-border: 30 41 59;           /* slate-800 */
+  --color-border-muted: 51 65 85;     /* slate-700 */
+
+  --color-text-primary: 248 250 252;  /* slate-50 */
+  --color-text-secondary: 203 213 225;/* slate-300 */
+  --color-text-muted: 148 163 184;    /* slate-400 */
+  --color-text-inverse: 15 23 42;     /* slate-900 */
+
+  --color-titlebar: 2 6 23;           /* slate-950 */
+  --color-sidebar: 2 6 23;            /* slate-950 */
+  --color-card: 30 41 59;             /* slate-800 */
+  --color-card-hover: 51 65 85;       /* slate-700 */
+
+  --scrollbar-thumb: 51 65 85;        /* slate-700 */
+  --scrollbar-hover: 71 85 105;       /* slate-600 */
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -14,6 +64,20 @@ body {
   user-select: none;
 }
 
+.input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(var(--color-border));
+  background: rgb(var(--color-bg-surface));
+  color: rgb(var(--color-text-primary));
+  padding: 0.625rem 0.75rem;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #3b82f6;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -24,12 +88,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: rgb(var(--scrollbar-thumb));
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: rgb(var(--scrollbar-hover));
 }
 
 /* Title bar drag region */

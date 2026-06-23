@@ -1,4 +1,9 @@
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Set system proxy (HTTP proxy mode)
 #[tauri::command]
@@ -6,7 +11,7 @@ pub async fn set_system_proxy(host: String, port: u16) -> Result<String, String>
     let proxy_addr = format!("{}:{}", host, port);
 
     // Enable proxy via Windows registry
-    let enable_result = Command::new("reg")
+    let enable_result = hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -23,7 +28,7 @@ pub async fn set_system_proxy(host: String, port: u16) -> Result<String, String>
     }
 
     // Set proxy server address
-    let server_result = Command::new("reg")
+    let server_result = hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -48,7 +53,7 @@ pub async fn set_system_proxy(host: String, port: u16) -> Result<String, String>
 /// Clear system proxy settings
 #[tauri::command]
 pub async fn clear_system_proxy() -> Result<String, String> {
-    let result = Command::new("reg")
+    let result = hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -71,7 +76,7 @@ pub async fn clear_system_proxy() -> Result<String, String> {
 /// Get current proxy status
 #[tauri::command]
 pub async fn get_proxy_status() -> Result<bool, String> {
-    let output = Command::new("reg")
+    let output = hidden_command("reg")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
@@ -88,7 +93,7 @@ pub async fn get_proxy_status() -> Result<bool, String> {
 /// Notify Windows that internet settings have changed
 fn notify_internet_settings_change() {
     // Use PowerShell to invoke WinINet notification
-    Command::new("powershell")
+    hidden_command("powershell")
         .args([
             "-Command",
             r#"
@@ -108,4 +113,11 @@ fn notify_internet_settings_change() {
         ])
         .output()
         .ok();
+}
+
+fn hidden_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }

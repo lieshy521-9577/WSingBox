@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
@@ -16,15 +17,29 @@ export default {
           800: "#1e40af",
           900: "#1e3a8a",
         },
-        dark: {
-          50: "#f8fafc",
-          100: "#f1f5f9",
-          200: "#e2e8f0",
-          700: "#334155",
-          800: "#1e293b",
-          850: "#172033",
-          900: "#0f172a",
-          950: "#020617",
+        // Semantic colors mapped to CSS variables
+        surface: {
+          base: "rgb(var(--color-bg-base) / <alpha-value>)",
+          DEFAULT: "rgb(var(--color-bg-surface) / <alpha-value>)",
+          elevated: "rgb(var(--color-bg-elevated) / <alpha-value>)",
+          muted: "rgb(var(--color-bg-muted) / <alpha-value>)",
+          subtle: "rgb(var(--color-bg-subtle) / <alpha-value>)",
+        },
+        border: {
+          DEFAULT: "rgb(var(--color-border) / <alpha-value>)",
+          muted: "rgb(var(--color-border-muted) / <alpha-value>)",
+        },
+        content: {
+          DEFAULT: "rgb(var(--color-text-primary) / <alpha-value>)",
+          secondary: "rgb(var(--color-text-secondary) / <alpha-value>)",
+          muted: "rgb(var(--color-text-muted) / <alpha-value>)",
+          inverse: "rgb(var(--color-text-inverse) / <alpha-value>)",
+        },
+        titlebar: "rgb(var(--color-titlebar) / <alpha-value>)",
+        sidebar: "rgb(var(--color-sidebar) / <alpha-value>)",
+        card: {
+          DEFAULT: "rgb(var(--color-card) / <alpha-value>)",
+          hover: "rgb(var(--color-card-hover) / <alpha-value>)",
         },
       },
     },

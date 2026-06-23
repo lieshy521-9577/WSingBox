@@ -2,11 +2,74 @@ mod commands;
 mod singbox;
 
 use commands::{config, latency, proxy, singbox as singbox_cmd};
+use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let tray_menu = MenuBuilder::new(app)
+                .text("show_window", "Show Window")
+                .text("hide_window", "Hide Window")
+                .separator()
+                .text("quit_app", "Quit")
+                .build()?;
+
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or("Tray icon asset is not available")?;
+
+            TrayIconBuilder::with_id("main-tray")
+                .icon(icon)
+                .tooltip("SingBox Client")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    if let Some(window) = app.get_webview_window("main") {
+                        match event.id().as_ref() {
+                            "show_window" => {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                            "hide_window" => {
+                                let _ = window.hide();
+                            }
+                            "quit_app" => {
+                                singbox_cmd::cleanup_before_exit();
+                                let _ = window.destroy();
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button, button_state, .. } = event {
+                        if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                            let app = tray.app_handle();
+                            if let Some(window) = app.get_webview_window("main") {
+                                let visible = window.is_visible().unwrap_or(true);
+                                if visible {
+                                    let _ = window.hide();
+                                } else {
+                                    let _ = window.show();
+                                    let _ = window.unminimize();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // sing-box process management
             singbox_cmd::start_singbox,
@@ -25,8 +88,19 @@ pub fn run() {
             config::import_config_file,
             config::get_config_overview,
             config::get_profiles,
+            config::get_active_outbound,
+            config::get_config_profiles,
+            config::get_active_config_profile,
             config::has_imported_config,
             config::clear_config,
+            config::get_app_settings,
+            config::save_app_settings,
+            config::get_rule_sets_json,
+            config::save_rule_sets_json,
+            config::set_active_outbound,
+            config::remove_group,
+            config::switch_config_profile,
+            config::delete_config_profile,
             // latency testing
             latency::test_node_latency,
             latency::test_all_latency,

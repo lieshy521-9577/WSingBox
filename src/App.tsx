@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitleBar from "./components/TitleBar";
 import Sidebar from "./components/Sidebar";
 import NodeList from "./components/NodeList";
@@ -7,20 +8,38 @@ import ProxyControl from "./components/ProxyControl";
 import LogViewer from "./components/LogViewer";
 import AddNodeModal from "./components/AddNodeModal";
 import ConfigOverviewPanel from "./components/ConfigOverviewPanel";
+import SettingsPanel from "./components/SettingsPanel";
 import { useSingbox } from "./hooks/useSingbox";
+import { useTheme } from "./hooks/useTheme";
 import { ConfigOverview } from "./types";
 
-type Page = "overview" | "nodes" | "logs";
+type Page = "overview" | "nodes" | "logs" | "settings";
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>("overview");
   const [showAddNode, setShowAddNode] = useState(false);
+  const [showQuitPrompt, setShowQuitPrompt] = useState(false);
   const [configOverview, setConfigOverview] = useState<ConfigOverview | null>(null);
   const singbox = useSingbox();
+  const { theme, toggleTheme } = useTheme();
 
-  // Load overview on mount
   useEffect(() => {
-    loadOverview();
+    let unlisten: (() => void) | undefined;
+
+    const setupCloseHandler = async () => {
+      unlisten = await getCurrentWindow().onCloseRequested((event) => {
+        event.preventDefault();
+        setShowQuitPrompt(true);
+      });
+    };
+
+    setupCloseHandler().catch((err) => {
+      console.error("Failed to register close handler:", err);
+    });
+
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   const loadOverview = useCallback(async () => {
@@ -28,32 +47,37 @@ function App() {
       const overview = await invoke<ConfigOverview | null>("get_config_overview");
       if (overview) {
         setConfigOverview(overview);
+      } else {
+        setConfigOverview(null);
       }
     } catch (err) {
       console.error("Failed to load overview:", err);
     }
   }, []);
 
+  // Load overview on mount and when the active saved profile changes
+  useEffect(() => {
+    loadOverview();
+  }, [loadOverview, singbox.activeConfigProfileId]);
+
   const handleImportConfig = useCallback(async () => {
     try {
-      // Use a simple prompt for file path (Tauri 2 file dialog requires additional plugin)
       const filePath = window.prompt(
-        "Enter the path to your sing-box config JSON file:",
+        "Enter the path to your sing-box config JSON file to import as a saved profile:",
         "C:\\_dProj\\Proxy\\client.json"
       );
       if (!filePath) return;
 
-      // import_config_file now returns ImportResult with nodes + profiles + active_node
       const result = await invoke<{
         overview: ConfigOverview;
         nodes: unknown[];
         profiles: unknown[];
         active_node: string;
+        active_outbound: string;
       }>("import_config_file", { filePath });
 
       setConfigOverview(result.overview);
-      // Refresh nodes and auto-select based on profile
-      await singbox.onConfigImported(result.active_node);
+      await singbox.onConfigImported(result.active_outbound || result.active_node);
       setCurrentPage("overview");
     } catch (err) {
       singbox.setError(String(err));
@@ -61,7 +85,7 @@ function App() {
   }, [singbox]);
 
   const handleClearConfig = useCallback(async () => {
-    if (!window.confirm("Are you sure you want to clear all proxy configuration?")) return;
+    if (!window.confirm("Are you sure you want to clear all saved imported profiles?")) return;
     try {
       await invoke("clear_config");
       setConfigOverview(null);
@@ -72,10 +96,25 @@ function App() {
     }
   }, [singbox]);
 
+  const handleMinimizeInstead = useCallback(async () => {
+    setShowQuitPrompt(false);
+    await getCurrentWindow().minimize();
+  }, []);
+
+  const handleExitApp = useCallback(async () => {
+    setShowQuitPrompt(false);
+    try {
+      await singbox.stopProxy();
+    } catch (err) {
+      console.error("Failed to stop proxy during exit:", err);
+    }
+    await getCurrentWindow().destroy();
+  }, [singbox]);
+
   return (
-    <div className="h-screen flex flex-col bg-dark-900">
+    <div className="h-screen flex flex-col bg-surface-base">
       {/* Custom title bar */}
-      <TitleBar />
+      <TitleBar theme={theme} onToggleTheme={toggleTheme} />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar navigation */}
@@ -85,6 +124,10 @@ function App() {
           isRunning={singbox.isRunning}
           onImportConfig={handleImportConfig}
           onClearConfig={handleClearConfig}
+          configProfiles={singbox.configProfiles}
+          activeConfigProfileId={singbox.activeConfigProfileId}
+          onSwitchConfigProfile={singbox.switchConfigProfile}
+          onDeleteConfigProfile={singbox.deleteConfigProfile}
         />
 
         {/* Main content */}
@@ -94,8 +137,9 @@ function App() {
             isRunning={singbox.isRunning}
             proxyEnabled={singbox.proxyEnabled}
             loading={singbox.loading}
-            selectedNodeId={singbox.selectedNodeId}
+            selectedOutboundTag={singbox.selectedOutboundTag}
             nodes={singbox.nodes}
+            profiles={singbox.profiles}
             hasConfig={singbox.hasConfig}
             onToggle={singbox.toggleProxy}
             error={singbox.error}
@@ -108,7 +152,7 @@ function App() {
               configOverview ? (
                 <ConfigOverviewPanel overview={configOverview} />
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-dark-200">
+                <div className="flex flex-col items-center justify-center h-full text-content-muted">
                   <p className="text-sm mb-3">No configuration loaded</p>
                   <button
                     onClick={handleImportConfig}
@@ -123,13 +167,18 @@ function App() {
               <NodeList
                 nodes={singbox.nodes}
                 profiles={singbox.profiles}
-                selectedNodeId={singbox.selectedNodeId}
-                onSelect={singbox.setSelectedNodeId}
+                selectedOutboundTag={singbox.selectedOutboundTag}
+                hasConfig={singbox.hasConfig}
+                onSelect={singbox.setSelectedOutboundTag}
                 onRemove={singbox.removeNode}
+                onRemoveGroup={singbox.removeGroup}
                 onAdd={() => setShowAddNode(true)}
               />
             )}
             {currentPage === "logs" && <LogViewer />}
+            {currentPage === "settings" && (
+              <SettingsPanel onSaved={loadOverview} />
+            )}
           </div>
         </main>
       </div>
@@ -140,6 +189,39 @@ function App() {
           onClose={() => setShowAddNode(false)}
           onAdd={singbox.addNode}
         />
+      )}
+
+      {showQuitPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-surface shadow-2xl">
+            <div className="border-b border-border px-5 py-4">
+              <h3 className="text-base font-semibold text-content">Quit SingBox Client</h3>
+              <p className="mt-1 text-sm text-content-secondary">
+                Minimize the window or exit the application?
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4">
+              <button
+                onClick={() => setShowQuitPrompt(false)}
+                className="rounded-lg px-4 py-2 text-sm text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMinimizeInstead}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-content transition-colors hover:bg-surface-elevated"
+              >
+                Minimize
+              </button>
+              <button
+                onClick={handleExitApp}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700"
+              >
+                Exit
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
