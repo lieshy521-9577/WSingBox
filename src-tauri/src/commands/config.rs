@@ -44,6 +44,7 @@ pub struct ConfigOverview {
     pub outbounds: Vec<OutboundInfo>,
     pub dns_servers: Vec<DnsServerInfo>,
     pub route_rules_count: usize,
+    pub route_rules: Vec<RouteRuleInfo>,
     pub rule_sets: Vec<RuleSetInfo>,
 }
 
@@ -79,6 +80,15 @@ pub struct RuleSetInfo {
     pub rule_type: String,
     pub format: String,
     pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteRuleInfo {
+    pub summary: String,
+    pub rule_type: String,
+    pub action: String,
+    pub outbound: String,
+    pub raw: serde_json::Value,
 }
 
 /// Persistent client settings applied to imported/generated configs
@@ -246,6 +256,54 @@ pub async fn get_rule_sets_json() -> Result<Vec<serde_json::Value>, String> {
         .and_then(|rule_sets| rule_sets.as_array())
         .cloned()
         .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn get_route_rules_json() -> Result<Vec<serde_json::Value>, String> {
+    let config_path = get_config_dir().join("config.json");
+    if !config_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+    let config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    Ok(config.get("route")
+        .and_then(|route| route.get("rules"))
+        .and_then(|rules| rules.as_array())
+        .cloned()
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn save_route_rules_json(rules: Vec<serde_json::Value>) -> Result<String, String> {
+    let config_path = get_config_dir().join("config.json");
+    if !config_path.exists() {
+        return Err("No active config profile is loaded".to_string());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+    let mut config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    if config.get("route").and_then(|route| route.as_object()).is_none() {
+        config["route"] = serde_json::json!({});
+    }
+
+    if let Some(route) = config.get_mut("route").and_then(|route| route.as_object_mut()) {
+        route.insert("rules".to_string(), serde_json::Value::Array(rules));
+    }
+
+    let updated_content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    fs::write(&config_path, updated_content)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    persist_active_profile_config(&config)?;
+
+    Ok("Route rules saved".to_string())
 }
 
 #[tauri::command]
@@ -959,6 +1017,26 @@ fn parse_config_overview(file_path: &str, config: &serde_json::Value) -> ConfigO
         .map(|arr| arr.len())
         .unwrap_or(0);
 
+    let route_rules = config.get("route")
+        .and_then(|r| r.get("rules"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter().map(|rule| {
+                let rule_type = rule.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let action = rule.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let outbound = rule.get("outbound").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let summary = summarize_route_rule(rule);
+                RouteRuleInfo {
+                    summary,
+                    rule_type,
+                    action,
+                    outbound,
+                    raw: rule.clone(),
+                }
+            }).collect()
+        })
+        .unwrap_or_default();
+
     let rule_sets = config.get("route")
         .and_then(|r| r.get("rule_set"))
         .and_then(|v| v.as_array())
@@ -980,8 +1058,55 @@ fn parse_config_overview(file_path: &str, config: &serde_json::Value) -> ConfigO
         outbounds,
         dns_servers,
         route_rules_count,
+        route_rules,
         rule_sets,
     }
+}
+
+fn summarize_route_rule(rule: &serde_json::Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    let order = [
+        ("domain_suffix", "domain_suffix"),
+        ("domain", "domain"),
+        ("domain_keyword", "domain_keyword"),
+        ("ip_cidr", "ip_cidr"),
+        ("source_ip_cidr", "source_ip_cidr"),
+        ("port", "port"),
+        ("network", "network"),
+        ("protocol", "protocol"),
+        ("action", "action"),
+        ("server", "server"),
+        ("outbound", "outbound"),
+    ];
+
+    for (field, label) in order {
+        if let Some(value) = rule.get(field) {
+            if let Some(array) = value.as_array() {
+                let items: Vec<String> = array.iter().filter_map(|item| {
+                    item.as_str().map(String::from).or_else(|| {
+                        item.as_u64().map(|n| n.to_string())
+                    })
+                }).collect();
+                if !items.is_empty() {
+                    let joined = items.into_iter().take(3).collect::<Vec<_>>().join(", ");
+                    parts.push(format!("{}: {}", label, joined));
+                }
+            } else if let Some(text) = value.as_str() {
+                if !text.is_empty() {
+                    parts.push(format!("{}: {}", label, text));
+                }
+            } else if let Some(num) = value.as_u64() {
+                parts.push(format!("{}: {}", label, num));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return serde_json::to_string(rule).unwrap_or_else(|_| "Route rule".to_string());
+    }
+
+    parts.join(" • ")
 }
 
 fn get_config_dir() -> std::path::PathBuf {

@@ -9,9 +9,10 @@ import LogViewer from "./components/LogViewer";
 import AddNodeModal from "./components/AddNodeModal";
 import ConfigOverviewPanel from "./components/ConfigOverviewPanel";
 import SettingsPanel from "./components/SettingsPanel";
+import RouteRuleModal from "./components/RouteRuleModal";
 import { useSingbox } from "./hooks/useSingbox";
 import { useTheme } from "./hooks/useTheme";
-import { ConfigOverview } from "./types";
+import { ConfigOverview, RouteRuleInfo } from "./types";
 
 type Page = "overview" | "nodes" | "logs" | "settings";
 
@@ -20,6 +21,7 @@ function App() {
   const [showAddNode, setShowAddNode] = useState(false);
   const [showQuitPrompt, setShowQuitPrompt] = useState(false);
   const [configOverview, setConfigOverview] = useState<ConfigOverview | null>(null);
+  const [editingRouteRule, setEditingRouteRule] = useState<{ index: number; rule: RouteRuleInfo } | null>(null);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
 
@@ -96,6 +98,35 @@ function App() {
     }
   }, [singbox]);
 
+  const handleEditRouteRule = useCallback((index: number, rule: RouteRuleInfo) => {
+    setEditingRouteRule({ index, rule });
+  }, []);
+
+  const handleSaveRouteRule = useCallback(async (value: string) => {
+    if (!configOverview || !editingRouteRule) {
+      throw new Error("No route rule is selected");
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error("Route rule must be valid JSON");
+    }
+
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+      throw new Error("Route rule must be a JSON object");
+    }
+
+    const nextRules = configOverview.route_rules.map((rule, idx) =>
+      idx === editingRouteRule.index ? parsed : rule.raw
+    );
+
+    await invoke("save_route_rules_json", { rules: nextRules });
+    setEditingRouteRule(null);
+    await loadOverview();
+  }, [configOverview, editingRouteRule, loadOverview]);
+
   const handleMinimizeInstead = useCallback(async () => {
     setShowQuitPrompt(false);
     await getCurrentWindow().minimize();
@@ -150,7 +181,7 @@ function App() {
           <div className="flex-1 overflow-auto p-4">
             {currentPage === "overview" && (
               configOverview ? (
-                <ConfigOverviewPanel overview={configOverview} />
+                <ConfigOverviewPanel overview={configOverview} onEditRouteRule={handleEditRouteRule} />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-content-muted">
                   <p className="text-sm mb-3">No configuration loaded</p>
@@ -222,6 +253,16 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {editingRouteRule && (
+        <RouteRuleModal
+          open={!!editingRouteRule}
+          title={`Edit Route Rule ${editingRouteRule.index + 1}`}
+          initialValue={JSON.stringify(editingRouteRule.rule.raw, null, 2)}
+          onClose={() => setEditingRouteRule(null)}
+          onSave={handleSaveRouteRule}
+        />
       )}
     </div>
   );

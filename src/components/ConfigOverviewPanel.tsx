@@ -6,14 +6,16 @@ import {
   ArrowRightLeft,
   Database,
   FileJson,
+  Pencil,
 } from "lucide-react";
-import { ConfigOverview } from "../types";
+import { ConfigOverview, RouteRuleInfo } from "../types";
 
 interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
+  onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
 }
 
-function ConfigOverviewPanel({ overview }: ConfigOverviewPanelProps) {
+function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelProps) {
   const proxyNodes = overview.outbounds.filter(
     (o) => !["direct", "block", "selector", "urltest"].includes(o.outbound_type)
   );
@@ -112,6 +114,44 @@ function ConfigOverviewPanel({ overview }: ConfigOverviewPanelProps) {
           ))}
         </div>
       </Section>
+
+      {/* Route Rules */}
+      {overview.route_rules.length > 0 && (
+        <Section title="Route Rules" icon={<Router size={15} />}>
+          <div className="space-y-1.5">
+            {overview.route_rules.map((rule, idx) => (
+              <div key={idx} className="flex items-start justify-between gap-3 rounded-lg bg-card/50 p-2.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-purple-500/20 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded font-medium">
+                      RULE
+                    </span>
+                    {rule.action && (
+                      <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
+                        {rule.action}
+                      </span>
+                    )}
+                    {rule.outbound && (
+                      <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
+                        {rule.outbound}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 truncate text-sm text-content">{rule.summary}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onEditRouteRule(idx, rule)}
+                  className="shrink-0 rounded p-1.5 text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content"
+                  title="Edit rule"
+                >
+                  <Pencil size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* Rule Sets */}
       {overview.rule_sets.length > 0 && (

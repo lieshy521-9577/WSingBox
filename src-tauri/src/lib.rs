@@ -97,6 +97,8 @@ pub fn run() {
             config::save_app_settings,
             config::get_rule_sets_json,
             config::save_rule_sets_json,
+            config::get_route_rules_json,
+            config::save_route_rules_json,
             config::set_active_outbound,
             config::remove_group,
             config::switch_config_profile,

@@ -15,6 +15,7 @@ export interface ConfigOverview {
   outbounds: OutboundInfo[];
   dns_servers: DnsServerInfo[];
   route_rules_count: number;
+  route_rules: RouteRuleInfo[];
   rule_sets: RuleSetInfo[];
 }
 
@@ -46,6 +47,14 @@ export interface RuleSetInfo {
   rule_type: string;
   format: string;
   url: string;
+}
+
+export interface RouteRuleInfo {
+  summary: string;
+  rule_type: string;
+  action: string;
+  outbound: string;
+  raw: Record<string, unknown>;
 }
 
 export interface AppSettings {
