@@ -10,11 +10,12 @@ import AddNodeModal from "./components/AddNodeModal";
 import ConfigOverviewPanel from "./components/ConfigOverviewPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import RouteRuleModal from "./components/RouteRuleModal";
+import AboutPanel from "./components/AboutPanel";
 import { useSingbox } from "./hooks/useSingbox";
 import { useTheme } from "./hooks/useTheme";
 import { ConfigOverview, ProxyNode, RouteRuleInfo } from "./types";
 
-type Page = "overview" | "nodes" | "logs" | "settings";
+type Page = "overview" | "nodes" | "logs" | "settings" | "about";
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>("overview");
@@ -182,7 +183,12 @@ function App() {
           <div className="flex-1 overflow-auto p-4">
             {currentPage === "overview" && (
               configOverview ? (
-                <ConfigOverviewPanel overview={configOverview} onEditRouteRule={handleEditRouteRule} />
+                <ConfigOverviewPanel
+                  overview={configOverview}
+                  onEditRouteRule={handleEditRouteRule}
+                  selectedOutboundTag={singbox.selectedOutboundTag}
+                  onSelectOutbound={singbox.setSelectedOutboundTag}
+                />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-content-muted">
                   <p className="text-sm mb-3">No configuration loaded</p>
@@ -212,6 +218,7 @@ function App() {
             {currentPage === "settings" && (
               <SettingsPanel onSaved={loadOverview} />
             )}
+            {currentPage === "about" && <AboutPanel />}
           </div>
         </main>
       </div>

@@ -75,6 +75,8 @@ pub fn run() {
             singbox_cmd::stop_singbox,
             singbox_cmd::get_singbox_status,
             singbox_cmd::quit_application,
+            singbox_cmd::get_runtime_logs,
+            singbox_cmd::clear_runtime_logs,
             // system proxy management
             proxy::set_system_proxy,
             proxy::clear_system_proxy,

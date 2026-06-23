@@ -1,75 +1,141 @@
 # SingBox Client
 
-A lightweight Windows GUI client for [sing-box](https://sing-box.sagernet.org/) proxy platform, built with Tauri 2 + React + TypeScript.
+A lightweight Windows GUI client for [sing-box](https://sing-box.sagernet.org/), built with Tauri 2, React, and TypeScript.
 
 ## Features
 
-- Import sing-box JSON configuration files with automatic 1.12.0 compatibility fixes
-- Auto-extract proxy nodes and profiles (selector/urltest groups) from config
-- Auto-select active node based on profile hierarchy (selector -> urltest -> node)
-- Start/stop sing-box core with admin elevation (UAC) for TUN mode support
-- Mixed inbound (HTTP/SOCKS5 on 127.0.0.1:7890) auto-injected as fallback
-- Automatic Windows system proxy setup and cleanup
-- TCP connection latency testing for all nodes
-- Config overview panel showing inbounds, outbounds, DNS, routes, rule sets
-- Dark themed modern UI with custom titlebar
+- Import sing-box JSON profiles with compatibility cleanup for sing-box `1.12.x`
+- Auto-extract proxy nodes and outbound groups from imported configs
+- Select groups or nodes from both the `Nodes` page and the `Overview` page
+- Start sing-box with elevation only when the active config contains `tun` inbound
+- Auto-inject a local `mixed` inbound fallback when needed
+- Manage Windows system proxy state and restore the previous proxy state on stop/exit
+- Test node latency from the client
+- Edit single nodes, route rules, DNS settings, TUN settings, and rule sets
+- View runtime logs inside the client
+- Light/dark desktop UI with custom titlebar and tray integration
 
 ## Architecture
 
-```
+```text
 SingBox/
-├── src/                    # React frontend
-│   ├── components/         # UI components (Sidebar, NodeList, ProxyControl, etc.)
-│   ├── hooks/              # useSingbox state management hook
-│   └── types/              # TypeScript interfaces
-├── src-tauri/              # Rust backend (Tauri 2)
-│   └── src/
-│       ├── commands/       # IPC commands (config, singbox, proxy, latency)
-│       └── singbox/        # Process management module
-├── bin/                    # sing-box binary (v1.12.0)
-└── package.json
+|-- src/                    # React frontend
+|   |-- components/         # UI components
+|   |-- hooks/              # App state and actions
+|   `-- types/              # TypeScript interfaces
+|-- src-tauri/              # Rust backend
+|   `-- src/
+|       `-- commands/       # IPC commands (config, singbox, proxy, latency)
+|-- bin/                    # sing-box.exe
+`-- package.json
 ```
 
 ## Tech Stack
 
-- **Frontend**: React 18, TypeScript, Tailwind CSS, Lucide Icons
-- **Backend**: Rust, Tauri 2
-- **Proxy Core**: sing-box 1.12.0
-- **Build**: Vite, Cargo
+- Frontend: React 18, TypeScript, Tailwind CSS, Lucide Icons
+- Backend: Rust, Tauri 2
+- Proxy Core: sing-box
+- Build: Vite, Cargo
 
 ## Prerequisites
 
-- Node.js >= 18
-- Rust toolchain (stable)
+- Node.js `>= 18`
+- Rust stable toolchain
 - Windows 10/11 with WebView2 runtime
-- sing-box binary in `bin/` directory
+- `sing-box.exe` available in `bin/` or otherwise discoverable by the app
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Run in development mode
 npm run tauri dev
-
-# Build release binary
 npm run tauri build
 ```
 
 ## Usage
 
-1. Launch the application
-2. Click "Import Config" in the sidebar and select your sing-box JSON config file
-3. The config will be auto-sanitized for sing-box 1.12.0 compatibility
-4. Nodes and profiles are extracted and displayed automatically
-5. Click "Start" to launch sing-box (UAC prompt for TUN privileges)
-6. System proxy is set automatically to 127.0.0.1:7890
-7. Click "Stop" to terminate sing-box and clear system proxy
+1. Launch the application.
+2. Click `Import Profile` in the sidebar and choose a sing-box JSON config.
+3. The client sanitizes older config details for sing-box `1.12.x`.
+4. Nodes and groups are extracted and shown in the UI.
+5. Click `Start` to launch sing-box.
+6. If the active config contains a `tun` inbound, Windows will show a `UAC` prompt.
+7. Click `Stop` to terminate sing-box and restore the previous Windows proxy state.
+
+## Import Profile Requirements
+
+The imported file must be a valid sing-box JSON config. The client works best when the file follows the usual sing-box structure:
+
+- `outbounds` should exist and include real proxy outbounds such as `vless`, `vmess`, `trojan`, `shadowsocks`, `hysteria2`, `tuic`, or `wireguard`
+- outbound groups should use `type: "selector"` or `type: "urltest"`
+- each group member listed in `outbounds[].outbounds` should match an existing outbound `tag`
+- if you want stable selection behavior, every node and group should have a unique `tag`
+- `inbounds` is optional because the client can inject a fallback `mixed` inbound
+- `dns` and `route` are optional, but if present they must already be valid sing-box sections
+
+### Minimal Recommended Sample
+
+```json
+{
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "node-a",
+      "server": "example.com",
+      "server_port": 443,
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "tls": {
+        "enabled": true,
+        "server_name": "example.com"
+      }
+    },
+    {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": ["node-a"],
+      "default": "node-a"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "final": "proxy"
+  }
+}
+```
+
+### Import Notes
+
+- If the profile contains `tun` inbound, startup will require elevation.
+- If no `mixed` inbound exists, the client will add one for local proxy mode.
+- Imported profiles are saved into the client profile store. Importing a new file does not clear existing saved profiles.
+- Group selection works best when selector and urltest groups already have correct `default` and `outbounds` relationships.
+
+### Quick Import Checklist
+
+- The JSON parses successfully.
+- Each real proxy outbound has required protocol-specific fields.
+- Every selector or urltest member tag points to an existing outbound.
+- `route.final` ultimately points to a valid group or node.
+- If using Reality, TLS, TUIC, or Hysteria2, those protocol fields already match your sing-box version.
 
 ## Supported Protocols
 
-- VLESS (with Reality, XTLS-Vision, WebSocket transport)
+- VLESS
 - VMess
 - Shadowsocks
 - Trojan
@@ -79,12 +145,18 @@ npm run tauri build
 
 ## Config Compatibility
 
-The client automatically fixes older config formats for sing-box 1.12.0:
+The client automatically normalizes some older config details for sing-box `1.12.x`:
 
-- Removes `strategy` from individual DNS servers (moved to DNS top-level)
-- Removes `type: "block"` DNS servers (deprecated)
-- Removes `sniff_override_destination` from route rule sniff actions
-- Adds `mixed` inbound on port 7890 if not present
+- Moves per-server `strategy` into the DNS top-level when needed
+- Removes deprecated DNS servers with `type: "block"`
+- Removes `sniff_override_destination` from route rule sniff actions when required
+- Adds a local `mixed` inbound on port `7890` if not present
+
+## Current Limitations
+
+- `Check for Updates` in the `About` page is informational only; no updater backend is wired yet
+- Subscription URL import is still a placeholder
+- Runtime logs depend on what sing-box writes to stdout/stderr
 
 ## License
 

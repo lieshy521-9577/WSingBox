@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Trash2 } from "lucide-react";
 
 interface LogEntry {
@@ -9,22 +10,43 @@ interface LogEntry {
 }
 
 function LogViewer() {
-  const [logs, setLogs] = useState<LogEntry[]>([
-    {
-      id: 1,
-      timestamp: new Date().toLocaleTimeString(),
-      level: "info",
-      message: "SingBox Client initialized. Waiting for connection...",
-    },
-  ]);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    let active = true;
 
-  const clearLogs = () => {
-    setLogs([]);
+    const loadLogs = async () => {
+      try {
+        const result = await invoke<LogEntry[]>("get_runtime_logs");
+        if (active) {
+          setLogs(result);
+        }
+      } catch (err) {
+        console.error("Failed to load runtime logs:", err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadLogs();
+    const timer = window.setInterval(loadLogs, 1000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const clearLogs = async () => {
+    try {
+      await invoke("clear_runtime_logs");
+      setLogs([]);
+    } catch (err) {
+      console.error("Failed to clear runtime logs:", err);
+    }
   };
 
   const levelColors: Record<string, string> = {
@@ -49,21 +71,22 @@ function LogViewer() {
       </div>
 
       {/* Log entries */}
-      <div className="flex-1 bg-surface border border-border rounded-lg p-3 overflow-auto font-mono text-xs">
-        {logs.length === 0 ? (
+      <div className="flex-1 select-text bg-surface border border-border rounded-lg p-3 overflow-auto font-mono text-xs">
+        {loading ? (
+          <p className="text-content-muted text-center py-8">Loading logs...</p>
+        ) : logs.length === 0 ? (
           <p className="text-content-muted text-center py-8">No logs yet</p>
         ) : (
           logs.map((log) => (
             <div key={log.id} className="flex gap-2 py-0.5">
-              <span className="text-content-muted shrink-0">{log.timestamp}</span>
+              <span className="text-content-muted shrink-0">{log.timestamp || "--"}</span>
               <span className={`shrink-0 uppercase w-12 ${levelColors[log.level] || "text-gray-400"}`}>
                 [{log.level}]
               </span>
-              <span className="text-content-secondary">{log.message}</span>
+              <span className="text-content-secondary whitespace-pre-wrap break-all">{log.message}</span>
             </div>
           ))
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

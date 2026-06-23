@@ -9,6 +9,8 @@ import {
   Pencil,
   ChevronDown,
   ChevronRight,
+  CheckCircle2,
+  MousePointerClick,
 } from "lucide-react";
 import { useState } from "react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
@@ -16,9 +18,16 @@ import { ConfigOverview, RouteRuleInfo } from "../types";
 interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
+  selectedOutboundTag: string | null;
+  onSelectOutbound: (tag: string) => void;
 }
 
-function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelProps) {
+function ConfigOverviewPanel({
+  overview,
+  onEditRouteRule,
+  selectedOutboundTag,
+  onSelectOutbound,
+}: ConfigOverviewPanelProps) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     inbounds: true,
     outboundGroups: true,
@@ -81,10 +90,26 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
             open={openSections.outboundGroups}
             onToggle={toggleSection}
           >
-            {groups.map((group, idx) => (
-              <div key={idx} className="p-2.5 bg-card/50 rounded-lg space-y-1.5">
+            {groups.map((group, idx) => {
+              const isSelected = selectedOutboundTag === group.tag;
+              return (
+              <button
+                type="button"
+                key={idx}
+                onClick={() => onSelectOutbound(group.tag)}
+                className={`w-full p-2.5 rounded-lg space-y-1.5 text-left transition-all ${
+                  isSelected
+                    ? "bg-primary-600/10 border border-primary-500/30"
+                    : "bg-card/50 border border-transparent hover:border-border hover:bg-card"
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                    {isSelected ? (
+                      <CheckCircle2 size={14} className="text-primary-500" />
+                    ) : (
+                      <MousePointerClick size={14} className="text-content-muted" />
+                    )}
                     <span className="text-[10px] bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 px-1.5 py-0.5 rounded font-medium">
                       {group.outbound_type.toUpperCase()}
                     </span>
@@ -99,8 +124,8 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
                     </span>
                   ))}
                 </div>
-              </div>
-            ))}
+              </button>
+            )})}
           </Section>
         )}
 
@@ -111,9 +136,25 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
           open={openSections.proxyNodes}
           onToggle={toggleSection}
         >
-          {proxyNodes.map((node, idx) => (
-            <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
+          {proxyNodes.map((node, idx) => {
+            const isSelected = selectedOutboundTag === node.tag;
+            return (
+            <button
+              type="button"
+              key={idx}
+              onClick={() => onSelectOutbound(node.tag)}
+              className={`flex w-full items-center justify-between p-2.5 rounded-lg text-left transition-all ${
+                isSelected
+                  ? "bg-primary-600/10 border border-primary-500/30"
+                  : "bg-card/50 border border-transparent hover:border-border hover:bg-card"
+              }`}
+            >
               <div className="flex items-center gap-2">
+                {isSelected ? (
+                  <CheckCircle2 size={14} className="text-primary-500" />
+                ) : (
+                  <MousePointerClick size={14} className="text-content-muted" />
+                )}
                 <span className="text-[10px] bg-blue-500/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-medium">
                   {node.outbound_type.toUpperCase()}
                 </span>
@@ -125,8 +166,8 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
                 </p>
                 <p className="text-[11px] text-content-muted">{node.details}</p>
               </div>
-            </div>
-          ))}
+            </button>
+          )})}
         </Section>
 
         <Section

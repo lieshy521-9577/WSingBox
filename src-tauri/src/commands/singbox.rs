@@ -5,6 +5,8 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::process::Stdio;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -14,6 +16,14 @@ struct ProxyStateSnapshot {
     proxy_enable: Option<u32>,
     proxy_server: Option<String>,
     proxy_override: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeLogEntry {
+    pub id: usize,
+    pub timestamp: String,
+    pub level: String,
+    pub message: String,
 }
 
 /// Start sing-box core process with elevation (admin privileges for TUN)
@@ -35,13 +45,24 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
     thread::sleep(Duration::from_millis(500));
 
+    clear_runtime_log_file().ok();
+
     let tun_enabled = config_has_tun_inbound(&config_path)?;
+    let log_path = get_runtime_log_file_path();
 
     if tun_enabled {
+        let singbox_path_quoted = quote_powershell_literal(&singbox_path);
+        let config_path_quoted = quote_powershell_literal(&config_path);
+        let log_path_quoted = quote_powershell_literal(&log_path);
+        let elevated_command = format!(
+            "& {singbox} run -c {config} *>> {log}",
+            singbox = singbox_path_quoted,
+            config = config_path_quoted,
+            log = log_path_quoted,
+        );
         let ps_command = format!(
-            "Start-Process -FilePath '{}' -ArgumentList 'run','-c','{}' -Verb RunAs -WindowStyle Hidden",
-            singbox_path,
-            config_path
+            "Start-Process -FilePath 'powershell' -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',{} -Verb RunAs -WindowStyle Hidden",
+            quote_powershell_literal(&elevated_command),
         );
 
         let result = hidden_command("powershell")
@@ -54,8 +75,15 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
             return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
         }
     } else {
+        let log_file = open_runtime_log_file()?;
+        let log_file_err = log_file
+            .try_clone()
+            .map_err(|e| format!("Failed to clone runtime log file handle: {}", e))?;
+
         hidden_command(&singbox_path)
             .args(["run", "-c", &config_path])
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err))
             .spawn()
             .map_err(|e| format!("Failed to start sing-box without elevation: {}", e))?;
     }
@@ -153,6 +181,31 @@ pub async fn get_singbox_status() -> Result<bool, String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.contains("sing-box.exe"))
+}
+
+#[tauri::command]
+pub async fn get_runtime_logs() -> Result<Vec<RuntimeLogEntry>, String> {
+    let path = get_runtime_log_file_path();
+    if !std::path::Path::new(&path).exists() {
+        return Ok(vec![]);
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read runtime log file: {}", e))?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let start = lines.len().saturating_sub(500);
+    Ok(lines[start..]
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, line)| parse_runtime_log_line(start + idx + 1, line))
+        .collect())
+}
+
+#[tauri::command]
+pub async fn clear_runtime_logs() -> Result<String, String> {
+    clear_runtime_log_file()?;
+    Ok("Runtime logs cleared".to_string())
 }
 
 fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
@@ -314,11 +367,34 @@ fn hidden_command(program: &str) -> Command {
     command
 }
 
+fn quote_powershell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn get_config_dir() -> String {
     let home = dirs::home_dir().unwrap_or_default();
     let config_dir = home.join(".singbox-client");
     std::fs::create_dir_all(&config_dir).ok();
     config_dir.to_string_lossy().to_string()
+}
+
+fn get_runtime_log_file_path() -> String {
+    format!("{}\\singbox-runtime.log", get_config_dir())
+}
+
+fn open_runtime_log_file() -> Result<std::fs::File, String> {
+    let path = get_runtime_log_file_path();
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("Failed to open runtime log file: {}", e))
+}
+
+fn clear_runtime_log_file() -> Result<(), String> {
+    let path = get_runtime_log_file_path();
+    fs::write(&path, "")
+        .map_err(|e| format!("Failed to clear runtime log file: {}", e))
 }
 
 fn get_proxy_state_file_path() -> String {
@@ -470,6 +546,41 @@ fn is_singbox_running() -> Result<bool, String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.contains("sing-box.exe"))
+}
+
+fn parse_runtime_log_line(id: usize, line: &str) -> Option<RuntimeLogEntry> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let level = if lower.contains("error") {
+        "error"
+    } else if lower.contains("warn") {
+        "warn"
+    } else if lower.contains("debug") {
+        "debug"
+    } else {
+        "info"
+    }.to_string();
+
+    let (timestamp, message) = if let Some((first, rest)) = trimmed.split_once(' ') {
+        if first.contains(':') || first.contains('T') {
+            (first.to_string(), rest.trim().to_string())
+        } else {
+            ("".to_string(), trimmed.to_string())
+        }
+    } else {
+        ("".to_string(), trimmed.to_string())
+    };
+
+    Some(RuntimeLogEntry {
+        id,
+        timestamp,
+        level,
+        message,
+    })
 }
 
 fn get_mixed_inbound_endpoint(config_path: &str) -> Result<(String, u16), String> {

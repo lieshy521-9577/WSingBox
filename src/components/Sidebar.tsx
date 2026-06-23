@@ -1,7 +1,7 @@
-import { Network, ScrollText, LayoutDashboard, FileUp, Trash2, Settings, FolderOpen } from "lucide-react";
+import { Network, ScrollText, LayoutDashboard, FileUp, Trash2, Settings, FolderOpen, Info } from "lucide-react";
 import { ConfigProfile } from "../types";
 
-type Page = "overview" | "nodes" | "logs" | "settings";
+type Page = "overview" | "nodes" | "logs" | "settings" | "about";
 
 interface SidebarProps {
   currentPage: Page;
@@ -31,6 +31,7 @@ function Sidebar({
     { id: "nodes" as Page, label: "Nodes", icon: Network },
     { id: "logs" as Page, label: "Logs", icon: ScrollText },
     { id: "settings" as Page, label: "Settings", icon: Settings },
+    { id: "about" as Page, label: "About", icon: Info },
   ];
 
   return (
