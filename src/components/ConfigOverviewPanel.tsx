@@ -52,173 +52,169 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
         <StatCard icon={<Database size={16} />} label="Rule Sets" value={String(overview.rule_sets.length)} color="text-orange-500 dark:text-orange-400" />
       </div>
 
-      {/* Inbounds */}
-      <Section
-        sectionKey="inbounds"
-        title="Inbounds"
-        icon={<ArrowRightLeft size={15} />}
-        open={openSections.inbounds}
-        onToggle={toggleSection}
-      >
-        {overview.inbounds.map((inbound, idx) => (
-          <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
-                {inbound.inbound_type.toUpperCase()}
-              </span>
-              <span className="text-sm text-content">{inbound.tag}</span>
-            </div>
-            <span className="text-xs text-content-secondary">{inbound.details}</span>
-          </div>
-        ))}
-      </Section>
-
-      {/* Outbound Groups */}
-      {groups.length > 0 && (
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Section
-          sectionKey="outboundGroups"
-          title="Outbound Groups"
-          icon={<Shield size={15} />}
-          open={openSections.outboundGroups}
+          sectionKey="inbounds"
+          title="Inbounds"
+          icon={<ArrowRightLeft size={15} />}
+          open={openSections.inbounds}
           onToggle={toggleSection}
         >
-          {groups.map((group, idx) => (
-            <div key={idx} className="p-2.5 bg-card/50 rounded-lg space-y-1.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 px-1.5 py-0.5 rounded font-medium">
-                    {group.outbound_type.toUpperCase()}
-                  </span>
-                  <span className="text-sm text-content font-medium">{group.tag}</span>
-                </div>
-                <span className="text-xs text-content-secondary">{group.details}</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5 pl-1">
-                {group.group_members.map((member, mIdx) => (
-                  <span key={mIdx} className="text-[11px] bg-surface-elevated text-content-secondary px-2 py-0.5 rounded">
-                    {member}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {/* Proxy Nodes */}
-      <Section
-        sectionKey="proxyNodes"
-        title="Proxy Nodes"
-        icon={<Server size={15} />}
-        open={openSections.proxyNodes}
-        onToggle={toggleSection}
-      >
-        {proxyNodes.map((node, idx) => (
-          <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] bg-blue-500/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-medium">
-                {node.outbound_type.toUpperCase()}
-              </span>
-              <span className="text-sm text-content">{node.tag}</span>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-content-secondary">
-                {node.server}{node.port > 0 && `:${node.port}`}
-              </p>
-              <p className="text-[11px] text-content-muted">{node.details}</p>
-            </div>
-          </div>
-        ))}
-      </Section>
-
-      {/* DNS Servers */}
-      <Section
-        sectionKey="dnsServers"
-        title="DNS Servers"
-        icon={<Globe size={15} />}
-        open={openSections.dnsServers}
-        onToggle={toggleSection}
-      >
-        <div className="grid grid-cols-1 gap-1.5">
-          {overview.dns_servers.map((dns, idx) => (
+          {overview.inbounds.map((inbound, idx) => (
             <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded font-medium">
-                  {dns.dns_type.toUpperCase()}
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
+                  {inbound.inbound_type.toUpperCase()}
                 </span>
-                <span className="text-sm text-content">{dns.tag}</span>
+                <span className="text-sm text-content">{inbound.tag}</span>
               </div>
-              <span className="text-xs text-content-secondary">{dns.server}</span>
+              <span className="text-xs text-content-secondary">{inbound.details}</span>
             </div>
           ))}
-        </div>
-      </Section>
+        </Section>
 
-      {/* Route Rules */}
-      {overview.route_rules.length > 0 && (
-        <Section
-          sectionKey="routeRules"
-          title="Route Rules"
-          icon={<Router size={15} />}
-          open={openSections.routeRules}
-          onToggle={toggleSection}
-        >
-          <div className="space-y-1.5">
-            {overview.route_rules.map((rule, idx) => (
-              <div key={idx} className="flex items-start justify-between gap-3 rounded-lg bg-card/50 p-2.5">
-                <div className="min-w-0">
+        {groups.length > 0 && (
+          <Section
+            sectionKey="outboundGroups"
+            title="Outbound Groups"
+            icon={<Shield size={15} />}
+            open={openSections.outboundGroups}
+            onToggle={toggleSection}
+          >
+            {groups.map((group, idx) => (
+              <div key={idx} className="p-2.5 bg-card/50 rounded-lg space-y-1.5">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] bg-purple-500/20 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded font-medium">
-                      RULE
+                    <span className="text-[10px] bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 px-1.5 py-0.5 rounded font-medium">
+                      {group.outbound_type.toUpperCase()}
                     </span>
-                    {rule.action && (
-                      <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
-                        {rule.action}
-                      </span>
-                    )}
-                    {rule.outbound && (
-                      <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
-                        {rule.outbound}
-                      </span>
-                    )}
+                    <span className="text-sm text-content font-medium">{group.tag}</span>
                   </div>
-                  <p className="mt-1 truncate text-sm text-content">{rule.summary}</p>
+                  <span className="text-xs text-content-secondary">{group.details}</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onEditRouteRule(idx, rule)}
-                  className="shrink-0 rounded p-1.5 text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content"
-                  title="Edit rule"
-                >
-                  <Pencil size={14} />
-                </button>
+                <div className="flex flex-wrap gap-1.5 pl-1">
+                  {group.group_members.map((member, mIdx) => (
+                    <span key={mIdx} className="text-[11px] bg-surface-elevated text-content-secondary px-2 py-0.5 rounded">
+                      {member}
+                    </span>
+                  ))}
+                </div>
               </div>
             ))}
-          </div>
-        </Section>
-      )}
+          </Section>
+        )}
 
-      {/* Rule Sets */}
-      {overview.rule_sets.length > 0 && (
         <Section
-          sectionKey="ruleSets"
-          title="Rule Sets"
-          icon={<Database size={15} />}
-          open={openSections.ruleSets}
+          sectionKey="proxyNodes"
+          title="Proxy Nodes"
+          icon={<Server size={15} />}
+          open={openSections.proxyNodes}
           onToggle={toggleSection}
         >
-          <div className="grid grid-cols-2 gap-1.5">
-            {overview.rule_sets.map((rs, idx) => (
-              <div key={idx} className="flex items-center gap-2 p-2 bg-card/50 rounded-lg">
-                <span className="text-[10px] bg-orange-500/20 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded font-medium">
-                  {rs.rule_type.toUpperCase()}
+          {proxyNodes.map((node, idx) => (
+            <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] bg-blue-500/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-medium">
+                  {node.outbound_type.toUpperCase()}
                 </span>
-                <span className="text-xs text-content truncate">{rs.tag}</span>
+                <span className="text-sm text-content">{node.tag}</span>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-content-secondary">
+                  {node.server}{node.port > 0 && `:${node.port}`}
+                </p>
+                <p className="text-[11px] text-content-muted">{node.details}</p>
+              </div>
+            </div>
+          ))}
+        </Section>
+
+        <Section
+          sectionKey="dnsServers"
+          title="DNS Servers"
+          icon={<Globe size={15} />}
+          open={openSections.dnsServers}
+          onToggle={toggleSection}
+        >
+          <div className="grid grid-cols-1 gap-1.5">
+            {overview.dns_servers.map((dns, idx) => (
+              <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded font-medium">
+                    {dns.dns_type.toUpperCase()}
+                  </span>
+                  <span className="text-sm text-content">{dns.tag}</span>
+                </div>
+                <span className="text-xs text-content-secondary">{dns.server}</span>
               </div>
             ))}
           </div>
         </Section>
-      )}
+
+        {overview.route_rules.length > 0 && (
+          <Section
+            sectionKey="routeRules"
+            title="Route Rules"
+            icon={<Router size={15} />}
+            open={openSections.routeRules}
+            onToggle={toggleSection}
+          >
+            <div className="space-y-1.5">
+              {overview.route_rules.map((rule, idx) => (
+                <div key={idx} className="flex items-start justify-between gap-3 rounded-lg bg-card/50 p-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] bg-purple-500/20 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded font-medium">
+                        RULE
+                      </span>
+                      {rule.action && (
+                        <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
+                          {rule.action}
+                        </span>
+                      )}
+                      {rule.outbound && (
+                        <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
+                          {rule.outbound}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-sm text-content">{rule.summary}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onEditRouteRule(idx, rule)}
+                    className="shrink-0 rounded p-1.5 text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content"
+                    title="Edit rule"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {overview.rule_sets.length > 0 && (
+          <Section
+            sectionKey="ruleSets"
+            title="Rule Sets"
+            icon={<Database size={15} />}
+            open={openSections.ruleSets}
+            onToggle={toggleSection}
+          >
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              {overview.rule_sets.map((rs, idx) => (
+                <div key={idx} className="flex items-center gap-2 p-2 bg-card/50 rounded-lg">
+                  <span className="text-[10px] bg-orange-500/20 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded font-medium">
+                    {rs.rule_type.toUpperCase()}
+                  </span>
+                  <span className="text-xs text-content truncate">{rs.tag}</span>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+      </div>
     </div>
   );
 }
@@ -249,7 +245,7 @@ function Section({
   onToggle: (key: string) => void;
 }) {
   return (
-    <div>
+    <div className="rounded-xl border border-border bg-card/40 p-3">
       <button
         type="button"
         onClick={() => onToggle(sectionKey)}

@@ -131,6 +131,36 @@ export function useSingbox() {
     []
   );
 
+  const updateNode = useCallback(
+    async (
+      id: string,
+      name: string,
+      nodeType: string,
+      server: string,
+      port: number,
+      settings: Record<string, unknown>
+    ) => {
+      try {
+        setLoading(true);
+        const node = await invoke<ProxyNode>("update_node", {
+          id,
+          name,
+          nodeType,
+          server,
+          port,
+          settings,
+        });
+        setNodes((prev) => prev.map((item) => (item.id === id ? node : item)));
+        setError(null);
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
   const removeNode = useCallback(async (id: string) => {
     try {
       await invoke("remove_node", { id });
@@ -291,6 +321,7 @@ export function useSingbox() {
     error,
     setSelectedOutboundTag: selectOutboundTag,
     addNode,
+    updateNode,
     removeNode,
     removeGroup,
     switchConfigProfile,

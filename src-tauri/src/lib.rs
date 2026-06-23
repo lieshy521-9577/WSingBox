@@ -82,6 +82,7 @@ pub fn run() {
             // configuration management
             config::get_nodes,
             config::add_node,
+            config::update_node,
             config::remove_node,
             config::generate_config,
             config::import_subscription,

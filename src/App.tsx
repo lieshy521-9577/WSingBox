@@ -12,7 +12,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import RouteRuleModal from "./components/RouteRuleModal";
 import { useSingbox } from "./hooks/useSingbox";
 import { useTheme } from "./hooks/useTheme";
-import { ConfigOverview, RouteRuleInfo } from "./types";
+import { ConfigOverview, ProxyNode, RouteRuleInfo } from "./types";
 
 type Page = "overview" | "nodes" | "logs" | "settings";
 
@@ -22,6 +22,7 @@ function App() {
   const [showQuitPrompt, setShowQuitPrompt] = useState(false);
   const [configOverview, setConfigOverview] = useState<ConfigOverview | null>(null);
   const [editingRouteRule, setEditingRouteRule] = useState<{ index: number; rule: RouteRuleInfo } | null>(null);
+  const [editingNode, setEditingNode] = useState<ProxyNode | null>(null);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
 
@@ -204,6 +205,7 @@ function App() {
                 onRemove={singbox.removeNode}
                 onRemoveGroup={singbox.removeGroup}
                 onAdd={() => setShowAddNode(true)}
+                onEdit={setEditingNode}
               />
             )}
             {currentPage === "logs" && <LogViewer />}
@@ -218,7 +220,17 @@ function App() {
       {showAddNode && (
         <AddNodeModal
           onClose={() => setShowAddNode(false)}
-          onAdd={singbox.addNode}
+          onSubmit={singbox.addNode}
+        />
+      )}
+
+      {editingNode && (
+        <AddNodeModal
+          onClose={() => setEditingNode(null)}
+          initialNode={editingNode}
+          onSubmit={(name, nodeType, server, port, settings) =>
+            singbox.updateNode(editingNode.id, name, nodeType, server, port, settings)
+          }
         />
       )}
 

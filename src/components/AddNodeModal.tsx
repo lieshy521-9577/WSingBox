@@ -1,19 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { ProtocolType, PROTOCOL_LABELS } from "../types";
+import { ProtocolType, PROTOCOL_LABELS, ProxyNode } from "../types";
 
 interface AddNodeModalProps {
   onClose: () => void;
-  onAdd: (
+  onSubmit: (
     name: string,
     nodeType: string,
     server: string,
     port: number,
     settings: Record<string, unknown>
   ) => Promise<void>;
+  initialNode?: ProxyNode | null;
 }
 
-function AddNodeModal({ onClose, onAdd }: AddNodeModalProps) {
+function AddNodeModal({ onClose, onSubmit, initialNode = null }: AddNodeModalProps) {
   const [name, setName] = useState("");
   const [nodeType, setNodeType] = useState<ProtocolType>("shadowsocks");
   const [server, setServer] = useState("");
@@ -21,6 +22,18 @@ function AddNodeModal({ onClose, onAdd }: AddNodeModalProps) {
   const [settingsJson, setSettingsJson] = useState("{}");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!initialNode) {
+      return;
+    }
+
+    setName(initialNode.name);
+    setNodeType(initialNode.node_type as ProtocolType);
+    setServer(initialNode.server);
+    setPort(initialNode.port);
+    setSettingsJson(JSON.stringify(initialNode.settings, null, 2));
+  }, [initialNode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +52,7 @@ function AddNodeModal({ onClose, onAdd }: AddNodeModalProps) {
 
     setLoading(true);
     try {
-      await onAdd(name, nodeType, server, port, settings);
+      await onSubmit(name, nodeType, server, port, settings);
       onClose();
     } catch (err) {
       setError(String(err));
@@ -63,7 +76,9 @@ function AddNodeModal({ onClose, onAdd }: AddNodeModalProps) {
       <div className="bg-surface-base border border-border rounded-xl w-[480px] max-h-[80vh] overflow-auto shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
-          <h3 className="text-base font-semibold text-content">Add Proxy Node</h3>
+          <h3 className="text-base font-semibold text-content">
+            {initialNode ? "Edit Proxy Node" : "Add Proxy Node"}
+          </h3>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-surface-elevated text-content-secondary"
@@ -161,7 +176,7 @@ function AddNodeModal({ onClose, onAdd }: AddNodeModalProps) {
               disabled={loading}
               className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
             >
-              {loading ? "Adding..." : "Add Node"}
+              {loading ? (initialNode ? "Saving..." : "Adding...") : (initialNode ? "Save Node" : "Add Node")}
             </button>
           </div>
         </form>

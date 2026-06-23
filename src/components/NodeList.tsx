@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2, Server, CheckCircle2, Activity, Layers3, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Trash2, Server, CheckCircle2, Activity, Layers3, ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { ProxyNode, PROTOCOL_LABELS, ProtocolType } from "../types";
 import { Profile } from "../hooks/useSingbox";
 
@@ -19,6 +19,7 @@ interface NodeListProps {
   onRemove: (id: string) => void;
   onRemoveGroup: (tag: string) => void;
   onAdd: () => void;
+  onEdit: (node: ProxyNode) => void;
 }
 
 function NodeList({
@@ -30,6 +31,7 @@ function NodeList({
   onRemove,
   onRemoveGroup,
   onAdd,
+  onEdit,
 }: NodeListProps) {
   const [latencies, setLatencies] = useState<Record<string, LatencyResult>>({});
   const [testing, setTesting] = useState(false);
@@ -359,6 +361,16 @@ function NodeList({
                 {/* Latency + Actions */}
                 <div className="flex items-center gap-2 shrink-0">
                   {renderLatency(node.id)}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit(node);
+                    }}
+                    className="p-1.5 rounded hover:bg-surface-elevated text-content-muted hover:text-content transition-colors"
+                    title="Edit node"
+                  >
+                    <Pencil size={14} />
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

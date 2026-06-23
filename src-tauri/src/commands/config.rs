@@ -805,6 +805,32 @@ pub async fn add_node(
     Ok(node)
 }
 
+/// Update an existing proxy node
+#[tauri::command]
+pub async fn update_node(
+    id: String,
+    name: String,
+    node_type: String,
+    server: String,
+    port: u16,
+    settings: serde_json::Value,
+) -> Result<ProxyNode, String> {
+    let mut nodes = get_nodes().await.unwrap_or_default();
+    let node = nodes.iter_mut()
+        .find(|node| node.id == id)
+        .ok_or("Node not found".to_string())?;
+
+    node.name = name;
+    node.node_type = node_type;
+    node.server = server;
+    node.port = port;
+    node.settings = settings;
+
+    let updated = node.clone();
+    save_nodes(&nodes)?;
+    Ok(updated)
+}
+
 /// Remove a node by ID
 #[tauri::command]
 pub async fn remove_node(id: String) -> Result<String, String> {
