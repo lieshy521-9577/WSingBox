@@ -248,16 +248,14 @@ export function useSingbox() {
     try {
       setLoading(true);
       await invoke("stop_singbox");
-      setIsRunning(false);
-      await invoke("clear_system_proxy");
-      setProxyEnabled(false);
+      await checkStatus();
       setError(null);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [checkStatus]);
 
   const toggleProxy = useCallback(async () => {
     if (isRunning) {

@@ -135,12 +135,11 @@ function App() {
   const handleExitApp = useCallback(async () => {
     setShowQuitPrompt(false);
     try {
-      await singbox.stopProxy();
+      await invoke("quit_application");
     } catch (err) {
-      console.error("Failed to stop proxy during exit:", err);
+      console.error("Failed to quit application cleanly:", err);
     }
-    await getCurrentWindow().destroy();
-  }, [singbox]);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-surface-base">
@@ -172,6 +171,7 @@ function App() {
             nodes={singbox.nodes}
             profiles={singbox.profiles}
             hasConfig={singbox.hasConfig}
+            tunEnabled={configOverview?.inbounds.some((inbound) => inbound.inbound_type === "tun") ?? false}
             onToggle={singbox.toggleProxy}
             error={singbox.error}
             onDismissError={() => singbox.setError(null)}

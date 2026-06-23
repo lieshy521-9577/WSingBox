@@ -7,7 +7,10 @@ import {
   Database,
   FileJson,
   Pencil,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
+import { useState } from "react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
 
 interface ConfigOverviewPanelProps {
@@ -16,10 +19,22 @@ interface ConfigOverviewPanelProps {
 }
 
 function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelProps) {
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    inbounds: true,
+    outboundGroups: true,
+    proxyNodes: true,
+    dnsServers: true,
+    routeRules: true,
+    ruleSets: true,
+  });
   const proxyNodes = overview.outbounds.filter(
     (o) => !["direct", "block", "selector", "urltest"].includes(o.outbound_type)
   );
   const groups = overview.outbounds.filter((o) => o.is_group);
+
+  const toggleSection = (key: string) => {
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   return (
     <div className="space-y-4">
@@ -38,7 +53,13 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
       </div>
 
       {/* Inbounds */}
-      <Section title="Inbounds" icon={<ArrowRightLeft size={15} />}>
+      <Section
+        sectionKey="inbounds"
+        title="Inbounds"
+        icon={<ArrowRightLeft size={15} />}
+        open={openSections.inbounds}
+        onToggle={toggleSection}
+      >
         {overview.inbounds.map((inbound, idx) => (
           <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
             <div className="flex items-center gap-2">
@@ -54,7 +75,13 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
 
       {/* Outbound Groups */}
       {groups.length > 0 && (
-        <Section title="Outbound Groups" icon={<Shield size={15} />}>
+        <Section
+          sectionKey="outboundGroups"
+          title="Outbound Groups"
+          icon={<Shield size={15} />}
+          open={openSections.outboundGroups}
+          onToggle={toggleSection}
+        >
           {groups.map((group, idx) => (
             <div key={idx} className="p-2.5 bg-card/50 rounded-lg space-y-1.5">
               <div className="flex items-center justify-between">
@@ -79,7 +106,13 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
       )}
 
       {/* Proxy Nodes */}
-      <Section title="Proxy Nodes" icon={<Server size={15} />}>
+      <Section
+        sectionKey="proxyNodes"
+        title="Proxy Nodes"
+        icon={<Server size={15} />}
+        open={openSections.proxyNodes}
+        onToggle={toggleSection}
+      >
         {proxyNodes.map((node, idx) => (
           <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
             <div className="flex items-center gap-2">
@@ -99,7 +132,13 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
       </Section>
 
       {/* DNS Servers */}
-      <Section title="DNS Servers" icon={<Globe size={15} />}>
+      <Section
+        sectionKey="dnsServers"
+        title="DNS Servers"
+        icon={<Globe size={15} />}
+        open={openSections.dnsServers}
+        onToggle={toggleSection}
+      >
         <div className="grid grid-cols-1 gap-1.5">
           {overview.dns_servers.map((dns, idx) => (
             <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
@@ -117,7 +156,13 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
 
       {/* Route Rules */}
       {overview.route_rules.length > 0 && (
-        <Section title="Route Rules" icon={<Router size={15} />}>
+        <Section
+          sectionKey="routeRules"
+          title="Route Rules"
+          icon={<Router size={15} />}
+          open={openSections.routeRules}
+          onToggle={toggleSection}
+        >
           <div className="space-y-1.5">
             {overview.route_rules.map((rule, idx) => (
               <div key={idx} className="flex items-start justify-between gap-3 rounded-lg bg-card/50 p-2.5">
@@ -155,7 +200,13 @@ function ConfigOverviewPanel({ overview, onEditRouteRule }: ConfigOverviewPanelP
 
       {/* Rule Sets */}
       {overview.rule_sets.length > 0 && (
-        <Section title="Rule Sets" icon={<Database size={15} />}>
+        <Section
+          sectionKey="ruleSets"
+          title="Rule Sets"
+          icon={<Database size={15} />}
+          open={openSections.ruleSets}
+          onToggle={toggleSection}
+        >
           <div className="grid grid-cols-2 gap-1.5">
             {overview.rule_sets.map((rs, idx) => (
               <div key={idx} className="flex items-center gap-2 p-2 bg-card/50 rounded-lg">
@@ -182,14 +233,35 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
   );
 }
 
-function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+function Section({
+  sectionKey,
+  title,
+  icon,
+  children,
+  open,
+  onToggle,
+}: {
+  sectionKey: string;
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  open: boolean;
+  onToggle: (key: string) => void;
+}) {
   return (
     <div>
-      <div className="flex items-center gap-2 mb-2">
+      <button
+        type="button"
+        onClick={() => onToggle(sectionKey)}
+        className="mb-2 flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-surface-elevated/60"
+      >
+        <span className="text-content-secondary">
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
         <span className="text-content-secondary">{icon}</span>
         <h3 className="text-sm font-medium text-content">{title}</h3>
-      </div>
-      <div className="space-y-1.5">{children}</div>
+      </button>
+      {open && <div className="space-y-1.5">{children}</div>}
     </div>
   );
 }

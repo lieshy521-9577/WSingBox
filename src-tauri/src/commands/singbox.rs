@@ -4,9 +4,17 @@ use std::thread;
 use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ProxyStateSnapshot {
+    proxy_enable: Option<u32>,
+    proxy_server: Option<String>,
+    proxy_override: Option<String>,
+}
 
 /// Start sing-box core process with elevation (admin privileges for TUN)
 #[tauri::command]
@@ -27,20 +35,29 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
     thread::sleep(Duration::from_millis(500));
 
-    let ps_command = format!(
-        "Start-Process -FilePath '{}' -ArgumentList 'run','-c','{}' -Verb RunAs -WindowStyle Hidden",
-        singbox_path,
-        config_path
-    );
+    let tun_enabled = config_has_tun_inbound(&config_path)?;
 
-    let result = hidden_command("powershell")
-        .args(["-Command", &ps_command])
-        .output()
-        .map_err(|e| format!("Failed to start sing-box: {}", e))?;
+    if tun_enabled {
+        let ps_command = format!(
+            "Start-Process -FilePath '{}' -ArgumentList 'run','-c','{}' -Verb RunAs -WindowStyle Hidden",
+            singbox_path,
+            config_path
+        );
 
-    if !result.status.success() {
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
+        let result = hidden_command("powershell")
+            .args(["-Command", &ps_command])
+            .output()
+            .map_err(|e| format!("Failed to start sing-box: {}", e))?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
+        }
+    } else {
+        hidden_command(&singbox_path)
+            .args(["run", "-c", &config_path])
+            .spawn()
+            .map_err(|e| format!("Failed to start sing-box without elevation: {}", e))?;
     }
 
     thread::sleep(Duration::from_secs(2));
@@ -58,19 +75,34 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path)?;
     set_system_proxy_internal(&proxy_host, proxy_port)?;
 
-    Ok("sing-box started successfully with admin privileges".to_string())
+    Ok(if tun_enabled {
+        "sing-box started successfully with TUN elevation".to_string()
+    } else {
+        "sing-box started successfully".to_string()
+    })
 }
 
 /// Stop sing-box core process and clear system proxy
 #[tauri::command]
 pub async fn stop_singbox() -> Result<String, String> {
-    cleanup_before_exit();
+    cleanup_before_exit()?;
     Ok("sing-box stopped".to_string())
 }
 
-pub fn cleanup_before_exit() {
-    clear_system_proxy_internal().ok();
+#[tauri::command]
+pub async fn quit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
+    cleanup_before_exit()?;
+    app_handle.exit(0);
+    Ok(())
+}
 
+pub fn cleanup_before_exit() -> Result<(), String> {
+    restore_system_proxy_internal()?;
+    stop_singbox_process()?;
+    Ok(())
+}
+
+fn stop_singbox_process() -> Result<(), String> {
     let output = hidden_command("taskkill")
         .args(["/F", "/IM", "sing-box.exe"])
         .output();
@@ -87,6 +119,28 @@ pub fn cleanup_before_exit() {
             }
         }
     }
+
+    thread::sleep(Duration::from_millis(600));
+
+    if is_singbox_running().unwrap_or(false) {
+        let elevate_stop = "Start-Process -FilePath 'powershell' -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command','taskkill /F /IM sing-box.exe' -Verb RunAs -WindowStyle Hidden -Wait";
+        let result = hidden_command("powershell")
+            .args(["-Command", elevate_stop])
+            .output()
+            .map_err(|e| format!("Failed to request elevated stop for sing-box: {}", e))?;
+
+        if !result.status.success() {
+            return Err("Failed to stop sing-box with elevation. The UAC prompt may have been denied.".to_string());
+        }
+
+        thread::sleep(Duration::from_millis(800));
+    }
+
+    if is_singbox_running().unwrap_or(false) {
+        return Err("sing-box is still running after stop. Close the elevated process or restart the app as administrator.".to_string());
+    }
+
+    Ok(())
 }
 
 /// Check if sing-box is currently running
@@ -102,6 +156,8 @@ pub async fn get_singbox_status() -> Result<bool, String> {
 }
 
 fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
+    save_proxy_state_snapshot()?;
+
     let proxy_addr = format!("{}:{}", host, port);
 
     hidden_command("reg")
@@ -157,6 +213,23 @@ fn clear_system_proxy_internal() -> Result<(), String> {
         .output()
         .map_err(|e| format!("Failed to clear proxy: {}", e))?;
 
+    notify_internet_settings_change();
+    Ok(())
+}
+
+fn restore_system_proxy_internal() -> Result<(), String> {
+    if let Some(snapshot) = load_proxy_state_snapshot()? {
+        write_proxy_enable(snapshot.proxy_enable.unwrap_or(0))?;
+        write_or_delete_reg_value("ProxyServer", snapshot.proxy_server.as_deref())?;
+        write_or_delete_reg_value("ProxyOverride", snapshot.proxy_override.as_deref())?;
+        notify_internet_settings_change();
+        delete_proxy_state_snapshot().ok();
+        return Ok(());
+    }
+
+    clear_system_proxy_internal()?;
+    write_or_delete_reg_value("ProxyServer", None)?;
+    write_or_delete_reg_value("ProxyOverride", None)?;
     notify_internet_settings_change();
     Ok(())
 }
@@ -248,6 +321,157 @@ fn get_config_dir() -> String {
     config_dir.to_string_lossy().to_string()
 }
 
+fn get_proxy_state_file_path() -> String {
+    format!("{}\\proxy-state.json", get_config_dir())
+}
+
+fn save_proxy_state_snapshot() -> Result<(), String> {
+    let path = get_proxy_state_file_path();
+    if std::path::Path::new(&path).exists() {
+        return Ok(());
+    }
+
+    let snapshot = ProxyStateSnapshot {
+        proxy_enable: query_proxy_enable().ok(),
+        proxy_server: query_reg_value("ProxyServer").ok().flatten(),
+        proxy_override: query_reg_value("ProxyOverride").ok().flatten(),
+    };
+
+    let content = serde_json::to_string_pretty(&snapshot)
+        .map_err(|e| format!("Failed to serialize proxy state snapshot: {}", e))?;
+    fs::write(&path, content)
+        .map_err(|e| format!("Failed to save proxy state snapshot: {}", e))?;
+    Ok(())
+}
+
+fn load_proxy_state_snapshot() -> Result<Option<ProxyStateSnapshot>, String> {
+    let path = get_proxy_state_file_path();
+    if !std::path::Path::new(&path).exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read proxy state snapshot: {}", e))?;
+    let snapshot = serde_json::from_str::<ProxyStateSnapshot>(&content)
+        .map_err(|e| format!("Failed to parse proxy state snapshot: {}", e))?;
+    Ok(Some(snapshot))
+}
+
+fn delete_proxy_state_snapshot() -> Result<(), String> {
+    let path = get_proxy_state_file_path();
+    if std::path::Path::new(&path).exists() {
+        fs::remove_file(&path)
+            .map_err(|e| format!("Failed to delete proxy state snapshot: {}", e))?;
+    }
+    Ok(())
+}
+
+fn query_proxy_enable() -> Result<u32, String> {
+    let output = hidden_command("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            "/v", "ProxyEnable",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to query ProxyEnable: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(0);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.contains("0x1") {
+        Ok(1)
+    } else {
+        Ok(0)
+    }
+}
+
+fn query_reg_value(name: &str) -> Result<Option<String>, String> {
+    let output = hidden_command("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            "/v", name,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to query registry value '{}': {}", name, e))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value = stdout
+        .lines()
+        .find(|line| line.contains(name))
+        .and_then(|line| line.split_whitespace().last())
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty());
+
+    Ok(value)
+}
+
+fn write_proxy_enable(value: u32) -> Result<(), String> {
+    hidden_command("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            "/v", "ProxyEnable",
+            "/t", "REG_DWORD",
+            "/d", &value.to_string(),
+            "/f",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to write ProxyEnable: {}", e))?;
+    Ok(())
+}
+
+fn write_or_delete_reg_value(name: &str, value: Option<&str>) -> Result<(), String> {
+    let mut command = hidden_command("reg");
+    match value {
+        Some(value) if !value.is_empty() => {
+            command.args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                "/v", name,
+                "/t", "REG_SZ",
+                "/d", value,
+                "/f",
+            ]);
+        }
+        _ => {
+            command.args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                "/v", name,
+                "/f",
+            ]);
+        }
+    }
+
+    let output = command
+        .output()
+        .map_err(|e| format!("Failed to update registry value '{}': {}", name, e))?;
+
+    if !output.status.success() && value.is_some() {
+        return Err(format!("Failed to write registry value '{}'", name));
+    }
+
+    Ok(())
+}
+
+fn is_singbox_running() -> Result<bool, String> {
+    let output = hidden_command("tasklist")
+        .args(["/FI", "IMAGENAME eq sing-box.exe"])
+        .output()
+        .map_err(|e| format!("Failed to check sing-box status: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.contains("sing-box.exe"))
+}
+
 fn get_mixed_inbound_endpoint(config_path: &str) -> Result<(String, u16), String> {
     let content = fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read config for proxy settings: {}", e))?;
@@ -275,4 +499,21 @@ fn get_mixed_inbound_endpoint(config_path: &str) -> Result<(String, u16), String
         .unwrap_or(7890) as u16;
 
     Ok((host, port))
+}
+
+fn config_has_tun_inbound(config_path: &str) -> Result<bool, String> {
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config for TUN detection: {}", e))?;
+    let config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config for TUN detection: {}", e))?;
+
+    Ok(config
+        .get("inbounds")
+        .and_then(|v| v.as_array())
+        .map(|inbounds| {
+            inbounds.iter().any(|inbound| {
+                inbound.get("type").and_then(|v| v.as_str()) == Some("tun")
+            })
+        })
+        .unwrap_or(false))
 }

@@ -10,6 +10,7 @@ interface ProxyControlProps {
   nodes: ProxyNode[];
   profiles: Profile[];
   hasConfig: boolean;
+  tunEnabled: boolean;
   onToggle: () => void;
   error: string | null;
   onDismissError: () => void;
@@ -23,6 +24,7 @@ function ProxyControl({
   nodes,
   profiles,
   hasConfig,
+  tunEnabled,
   onToggle,
   error,
   onDismissError,
@@ -65,7 +67,7 @@ function ProxyControl({
 
         {/* Right: proxy mode indicator */}
         <div className="flex items-center gap-2">
-          {hasConfig && (
+          {tunEnabled && (
             <span className="text-xs bg-green-600/20 text-green-600 dark:text-green-400 px-2 py-1 rounded">
               TUN Mode
             </span>

@@ -125,8 +125,9 @@ fn write_temp_latency_config(
 }
 
 fn start_temp_singbox(singbox_path: &str, config_path: &PathBuf) -> Result<Child, String> {
-    Command::new(singbox_path)
+    hidden_command(singbox_path)
         .args(["run", "-c", &config_path.to_string_lossy()])
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

@@ -1,5 +1,4 @@
 mod commands;
-mod singbox;
 
 use commands::{config, latency, proxy, singbox as singbox_cmd};
 use tauri::{
@@ -42,8 +41,8 @@ pub fn run() {
                                 let _ = window.hide();
                             }
                             "quit_app" => {
-                                singbox_cmd::cleanup_before_exit();
-                                let _ = window.destroy();
+                                let _ = singbox_cmd::cleanup_before_exit();
+                                app.exit(0);
                             }
                             _ => {}
                         }
@@ -75,6 +74,7 @@ pub fn run() {
             singbox_cmd::start_singbox,
             singbox_cmd::stop_singbox,
             singbox_cmd::get_singbox_status,
+            singbox_cmd::quit_application,
             // system proxy management
             proxy::set_system_proxy,
             proxy::clear_system_proxy,

@@ -437,11 +437,17 @@ pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
         .or_else(|| profiles.first())
         .ok_or("No outbound groups found in current config".to_string())?;
 
-    if target_tag == top_selector.tag {
+    let effective_target = if profiles.iter().any(|profile| profile.tag == target_tag) {
+        resolve_profile_leaf_target(&target_tag, &profiles, &nodes).unwrap_or_else(|| target_tag.clone())
+    } else {
+        target_tag.clone()
+    };
+
+    if effective_target == top_selector.tag {
         return Ok(target_tag);
     }
 
-    let path = build_selector_path(&top_selector.tag, &target_tag, &profiles)
+    let path = build_selector_path(&top_selector.tag, &effective_target, &profiles)
         .ok_or_else(|| format!("Outbound '{}' is not reachable from selector '{}'", target_tag, top_selector.tag))?;
 
     apply_selector_path(&mut config, &path)?;
@@ -674,6 +680,30 @@ fn determine_active_outbound(profiles: &[Profile], nodes: &[ProxyNode]) -> Strin
     }
 
     nodes.first().map(|n| n.id.clone()).unwrap_or_default()
+}
+
+fn resolve_profile_leaf_target(target_tag: &str, profiles: &[Profile], nodes: &[ProxyNode]) -> Option<String> {
+    let profile = profiles.iter().find(|profile| profile.tag == target_tag)?;
+
+    if profile.profile_type == "urltest" {
+        return Some(target_tag.to_string());
+    }
+
+    let default = if !profile.default_outbound.is_empty() {
+        profile.default_outbound.as_str()
+    } else {
+        profile.outbounds.first().map(|item| item.as_str()).unwrap_or("")
+    };
+
+    if default.is_empty() {
+        return None;
+    }
+
+    if nodes.iter().any(|node| node.id == default) {
+        return Some(default.to_string());
+    }
+
+    resolve_profile_leaf_target(default, profiles, nodes)
 }
 
 fn build_selector_path(root_tag: &str, target_tag: &str, profiles: &[Profile]) -> Option<Vec<(String, String)>> {

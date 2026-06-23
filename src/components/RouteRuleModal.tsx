@@ -37,7 +37,7 @@ function RouteRuleModal({ open, title, initialValue, onClose, onSave }: RouteRul
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-4xl rounded-xl border border-border bg-surface shadow-2xl">
+      <div className="flex h-[min(88vh,900px)] w-[min(92vw,1200px)] flex-col rounded-xl border border-border bg-surface shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div>
             <h3 className="text-base font-semibold text-content">{title}</h3>
@@ -54,12 +54,12 @@ function RouteRuleModal({ open, title, initialValue, onClose, onSave }: RouteRul
           </button>
         </div>
 
-        <div className="space-y-4 px-5 py-4">
+        <div className="flex min-h-0 flex-1 flex-col space-y-4 px-5 py-4">
           <textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}
             rows={18}
-            className="input min-h-[28rem] resize-y font-mono text-xs"
+            className="input min-h-0 flex-1 resize-none font-mono text-xs"
             spellCheck={false}
           />
 
