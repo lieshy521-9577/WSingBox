@@ -36,6 +36,7 @@ function NodeList({
   const [latencies, setLatencies] = useState<Record<string, LatencyResult>>({});
   const [testing, setTesting] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [latencyMode, setLatencyMode] = useState<"auto" | "connect" | "http">("auto");
 
   const getNodeProfiles = (nodeId: string): string[] => {
     return profiles
@@ -50,6 +51,14 @@ function NodeList({
 
   const topSelectorTag = profiles.find((p) => p.profile_type === "selector")?.tag ?? profiles[0]?.tag ?? null;
 
+  const resolveLatencyMode = (nodeType: string) => {
+    if (latencyMode !== "auto") {
+      return latencyMode;
+    }
+
+    return ["hysteria2", "tuic"].includes(nodeType) ? "http" : "connect";
+  };
+
   const testAllLatency = useCallback(async () => {
     setTesting(true);
     try {
@@ -62,6 +71,7 @@ function NodeList({
             server: node.server,
             port: node.port,
             settings: node.settings,
+            mode: resolveLatencyMode(node.node_type),
           });
           setLatencies((prev) => ({ ...prev, [node.id]: result }));
         } catch {
@@ -74,7 +84,7 @@ function NodeList({
     } finally {
       setTesting(false);
     }
-  }, [nodes]);
+  }, [latencyMode, nodes]);
 
   const renderLatency = (nodeId: string) => {
     const result = latencies[nodeId];
@@ -155,6 +165,16 @@ function NodeList({
           )}
         </div>
         <div className="flex items-center gap-2">
+          <select
+            value={latencyMode}
+            onChange={(e) => setLatencyMode(e.target.value as "auto" | "connect" | "http")}
+            className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-content"
+            title="Latency test mode"
+          >
+            <option value="auto">Auto</option>
+            <option value="connect">Connect</option>
+            <option value="http">HTTP</option>
+          </select>
           <button
             onClick={testAllLatency}
             disabled={testing || nodes.length === 0}
@@ -165,7 +185,7 @@ function NodeList({
             }`}
           >
             <Activity size={14} className={testing ? "animate-pulse" : ""} />
-            {testing ? "Testing..." : "Test Latency"}
+            {testing ? "Testing..." : `Test ${latencyMode === "auto" ? "Auto" : latencyMode === "connect" ? "Connect" : "HTTP"}`}
           </button>
           <button
             onClick={onAdd}

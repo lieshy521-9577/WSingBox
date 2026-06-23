@@ -33,11 +33,13 @@ pub fn run() {
                     if let Some(window) = app.get_webview_window("main") {
                         match event.id().as_ref() {
                             "show_window" => {
+                                let _ = window.set_skip_taskbar(false);
                                 let _ = window.show();
                                 let _ = window.unminimize();
                                 let _ = window.set_focus();
                             }
                             "hide_window" => {
+                                let _ = window.set_skip_taskbar(true);
                                 let _ = window.hide();
                             }
                             "quit_app" => {
@@ -55,8 +57,10 @@ pub fn run() {
                             if let Some(window) = app.get_webview_window("main") {
                                 let visible = window.is_visible().unwrap_or(true);
                                 if visible {
+                                    let _ = window.set_skip_taskbar(true);
                                     let _ = window.hide();
                                 } else {
+                                    let _ = window.set_skip_taskbar(false);
                                     let _ = window.show();
                                     let _ = window.unminimize();
                                     let _ = window.set_focus();
@@ -75,6 +79,7 @@ pub fn run() {
             singbox_cmd::stop_singbox,
             singbox_cmd::get_singbox_status,
             singbox_cmd::quit_application,
+            singbox_cmd::hide_main_window,
             singbox_cmd::get_runtime_logs,
             singbox_cmd::clear_runtime_logs,
             // system proxy management

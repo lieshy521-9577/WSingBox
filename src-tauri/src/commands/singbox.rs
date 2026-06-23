@@ -5,7 +5,9 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use std::fs::OpenOptions;
+use std::net::TcpStream;
 use std::process::Stdio;
 
 #[cfg(windows)]
@@ -31,10 +33,14 @@ pub struct RuntimeLogEntry {
 pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
     let config_dir = get_config_dir();
     let config_path = format!("{}\\config.json", config_dir);
+    let bootstrap_config_path = format!("{}\\config.bootstrap.json", config_dir);
 
     if !std::path::Path::new(&config_path).exists() {
         return Err("Configuration file not found. Please import a config or add nodes first.".to_string());
     }
+
+    prepare_runtime_config_for_bootstrap(&config_path)?;
+    let _ = fs::remove_file(&bootstrap_config_path);
 
     let singbox_path = find_singbox_binary(&app_handle)?;
 
@@ -49,61 +55,43 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
     let tun_enabled = config_has_tun_inbound(&config_path)?;
     let log_path = get_runtime_log_file_path();
-
-    if tun_enabled {
-        let singbox_path_quoted = quote_powershell_literal(&singbox_path);
-        let config_path_quoted = quote_powershell_literal(&config_path);
-        let log_path_quoted = quote_powershell_literal(&log_path);
-        let elevated_command = format!(
-            "& {singbox} run -c {config} *>> {log}",
-            singbox = singbox_path_quoted,
-            config = config_path_quoted,
-            log = log_path_quoted,
-        );
-        let ps_command = format!(
-            "Start-Process -FilePath 'powershell' -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',{} -Verb RunAs -WindowStyle Hidden",
-            quote_powershell_literal(&elevated_command),
-        );
-
-        let result = hidden_command("powershell")
-            .args(["-Command", &ps_command])
-            .output()
-            .map_err(|e| format!("Failed to start sing-box: {}", e))?;
-
-        if !result.status.success() {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
-        }
-    } else {
-        let log_file = open_runtime_log_file()?;
-        let log_file_err = log_file
-            .try_clone()
-            .map_err(|e| format!("Failed to clone runtime log file handle: {}", e))?;
-
-        hidden_command(&singbox_path)
-            .args(["run", "-c", &config_path])
-            .stdout(Stdio::from(log_file))
-            .stderr(Stdio::from(log_file_err))
-            .spawn()
-            .map_err(|e| format!("Failed to start sing-box without elevation: {}", e))?;
-    }
-
-    thread::sleep(Duration::from_secs(2));
-
-    let check = hidden_command("tasklist")
-        .args(["/FI", "IMAGENAME eq sing-box.exe"])
-        .output()
-        .map_err(|e| format!("Failed to verify sing-box status: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&check.stdout);
-    if !stdout.contains("sing-box.exe") {
-        return Err("sing-box failed to start. Check if the configuration is correct.".to_string());
-    }
-
     let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path)?;
+    let mut started_with_fallback = false;
+    let mut started = false;
+
+    launch_singbox_with_config(&singbox_path, &config_path, &log_path, tun_enabled)?;
+
+    if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
+        started = true;
+    } else {
+        let details = get_runtime_start_failure_details().unwrap_or_default();
+        if should_retry_without_remote_rule_sets(&details) {
+            let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(&config_path, &bootstrap_config_path)?;
+            if removed_rule_sets > 0 {
+                stop_singbox_process().ok();
+                clear_runtime_log_file().ok();
+                launch_singbox_with_config(&singbox_path, &bootstrap_config_path, &log_path, tun_enabled)?;
+                if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
+                    started_with_fallback = true;
+                    started = true;
+                }
+            }
+        }
+    }
+
+    if !started {
+        let details = get_runtime_start_failure_details().unwrap_or_default();
+        if details.is_empty() {
+            return Err("sing-box failed to start. The mixed inbound port did not open in time.".to_string());
+        }
+        return Err(format!("sing-box failed to start. {}", details));
+    }
+
     set_system_proxy_internal(&proxy_host, proxy_port)?;
 
-    Ok(if tun_enabled {
+    Ok(if started_with_fallback {
+        "sing-box started with remote rule-set bootstrap skipped".to_string()
+    } else if tun_enabled {
         "sing-box started successfully with TUN elevation".to_string()
     } else {
         "sing-box started successfully".to_string()
@@ -121,6 +109,22 @@ pub async fn stop_singbox() -> Result<String, String> {
 pub async fn quit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
     cleanup_before_exit()?;
     app_handle.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hide_main_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let window = app_handle
+        .get_webview_window("main")
+        .ok_or("Main window not found".to_string())?;
+
+    window
+        .set_skip_taskbar(true)
+        .map_err(|e| format!("Failed to hide taskbar entry: {}", e))?;
+    window
+        .hide()
+        .map_err(|e| format!("Failed to hide main window: {}", e))?;
+
     Ok(())
 }
 
@@ -367,6 +371,53 @@ fn hidden_command(program: &str) -> Command {
     command
 }
 
+fn launch_singbox_with_config(
+    singbox_path: &str,
+    config_path: &str,
+    log_path: &str,
+    tun_enabled: bool,
+) -> Result<(), String> {
+    if tun_enabled {
+        let singbox_path_quoted = quote_powershell_literal(singbox_path);
+        let config_path_quoted = quote_powershell_literal(config_path);
+        let log_path_quoted = quote_powershell_literal(log_path);
+        let elevated_command = format!(
+            "& {singbox} run -c {config} *>> {log}",
+            singbox = singbox_path_quoted,
+            config = config_path_quoted,
+            log = log_path_quoted,
+        );
+        let ps_command = format!(
+            "Start-Process -FilePath 'powershell' -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',{} -Verb RunAs -WindowStyle Hidden",
+            quote_powershell_literal(&elevated_command),
+        );
+
+        let result = hidden_command("powershell")
+            .args(["-Command", &ps_command])
+            .output()
+            .map_err(|e| format!("Failed to start sing-box: {}", e))?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
+        }
+    } else {
+        let log_file = open_runtime_log_file()?;
+        let log_file_err = log_file
+            .try_clone()
+            .map_err(|e| format!("Failed to clone runtime log file handle: {}", e))?;
+
+        hidden_command(singbox_path)
+            .args(["run", "-c", config_path])
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err))
+            .spawn()
+            .map_err(|e| format!("Failed to start sing-box without elevation: {}", e))?;
+    }
+
+    Ok(())
+}
+
 fn quote_powershell_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -380,6 +431,197 @@ fn get_config_dir() -> String {
 
 fn get_runtime_log_file_path() -> String {
     format!("{}\\singbox-runtime.log", get_config_dir())
+}
+
+fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String> {
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config for bootstrap preparation: {}", e))?;
+    let mut config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config for bootstrap preparation: {}", e))?;
+
+    let selected_outbound = detect_active_outbound_tag(&config);
+    let mut changed = false;
+
+    if let Some(rule_sets) = config
+        .get_mut("route")
+        .and_then(|route| route.get_mut("rule_set"))
+        .and_then(|value| value.as_array_mut())
+    {
+        for rule_set in rule_sets {
+            let is_remote = rule_set
+                .get("type")
+                .and_then(|value| value.as_str())
+                == Some("remote");
+            if !is_remote {
+                continue;
+            }
+
+            if let Some(obj) = rule_set.as_object_mut() {
+                match &selected_outbound {
+                    Some(outbound) if !outbound.is_empty() => {
+                        if obj.get("download_detour").and_then(|value| value.as_str()) != Some(outbound.as_str()) {
+                            obj.insert("download_detour".to_string(), serde_json::Value::String(outbound.clone()));
+                            changed = true;
+                        }
+                    }
+                    _ => {
+                        if obj.remove("download_detour").is_some() {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if changed {
+        let updated = serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize bootstrap-prepared config: {}", e))?;
+        fs::write(config_path, updated)
+            .map_err(|e| format!("Failed to save bootstrap-prepared config: {}", e))?;
+    }
+
+    Ok(())
+}
+
+fn detect_active_outbound_tag(config: &serde_json::Value) -> Option<String> {
+    let outbounds = config.get("outbounds")?.as_array()?;
+    let selector = outbounds.iter().find(|outbound| {
+        outbound.get("type").and_then(|value| value.as_str()) == Some("selector")
+    }).or_else(|| outbounds.iter().find(|outbound| {
+        matches!(
+            outbound.get("type").and_then(|value| value.as_str()),
+            Some("selector" | "urltest")
+        )
+    }))?;
+
+    let default = selector
+        .get("default")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    default.or_else(|| {
+        selector
+            .get("outbounds")
+            .and_then(|value| value.as_array())
+            .and_then(|members| members.iter().find_map(|member| member.as_str().map(str::to_string)))
+    })
+}
+
+fn should_retry_without_remote_rule_sets(details: &str) -> bool {
+    let lower = details.to_ascii_lowercase();
+    lower.contains("rule-set")
+        && (lower.contains("initialize rule-set")
+            || lower.contains("download")
+            || lower.contains("eof")
+            || lower.contains("timeout")
+            || lower.contains("tls")
+            || lower.contains("connection reset")
+            || lower.contains("no such host"))
+}
+
+fn build_bootstrap_config_without_remote_rule_sets(config_path: &str, output_path: &str) -> Result<usize, String> {
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config for bootstrap fallback: {}", e))?;
+    let mut config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config for bootstrap fallback: {}", e))?;
+
+    let mut removed_tags: Vec<String> = Vec::new();
+
+    if let Some(rule_sets) = config
+        .get_mut("route")
+        .and_then(|route| route.get_mut("rule_set"))
+        .and_then(|value| value.as_array_mut())
+    {
+        let mut kept = Vec::with_capacity(rule_sets.len());
+        for rule_set in rule_sets.iter() {
+            let is_remote = rule_set
+                .get("type")
+                .and_then(|value| value.as_str())
+                == Some("remote");
+            if is_remote {
+                if let Some(tag) = rule_set.get("tag").and_then(|value| value.as_str()) {
+                    removed_tags.push(tag.to_string());
+                }
+            } else {
+                kept.push(rule_set.clone());
+            }
+        }
+        *rule_sets = kept;
+    }
+
+    if removed_tags.is_empty() {
+        return Ok(0);
+    }
+
+    remove_rules_referencing_rule_sets(config.get_mut("route"), "rules", &removed_tags);
+    remove_rules_referencing_rule_sets(config.get_mut("dns"), "rules", &removed_tags);
+
+    let updated = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize bootstrap fallback config: {}", e))?;
+    fs::write(output_path, updated)
+        .map_err(|e| format!("Failed to save bootstrap fallback config: {}", e))?;
+
+    Ok(removed_tags.len())
+}
+
+fn remove_rules_referencing_rule_sets(
+    parent: Option<&mut serde_json::Value>,
+    rules_key: &str,
+    removed_tags: &[String],
+) {
+    let Some(rules) = parent
+        .and_then(|value| value.get_mut(rules_key))
+        .and_then(|value| value.as_array_mut())
+    else {
+        return;
+    };
+
+    rules.retain(|rule| !rule_references_any_rule_set(rule, removed_tags));
+}
+
+fn rule_references_any_rule_set(rule: &serde_json::Value, removed_tags: &[String]) -> bool {
+    let Some(value) = rule.get("rule_set") else {
+        return false;
+    };
+
+    if let Some(single) = value.as_str() {
+        return removed_tags.iter().any(|tag| tag == single);
+    }
+
+    value
+        .as_array()
+        .map(|items| {
+            items.iter().filter_map(|item| item.as_str()).any(|tag| removed_tags.iter().any(|removed| removed == tag))
+        })
+        .unwrap_or(false)
+}
+
+fn get_runtime_start_failure_details() -> Result<String, String> {
+    let path = get_runtime_log_file_path();
+    if !std::path::Path::new(&path).exists() {
+        return Ok(String::new());
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read runtime log file: {}", e))?;
+    let lines: Vec<&str> = content.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    if lines.is_empty() {
+        return Ok(String::new());
+    }
+
+    let error_line = lines.iter().rev().find(|line| {
+        let lower = line.to_ascii_lowercase();
+        lower.contains("error") || lower.contains("fatal") || lower.contains("failed")
+    });
+
+    if let Some(line) = error_line {
+        return Ok(format!("Last error: {}", line));
+    }
+
+    let excerpt = lines.iter().rev().take(3).copied().collect::<Vec<_>>();
+    Ok(format!("Recent log: {}", excerpt.into_iter().rev().collect::<Vec<_>>().join(" | ")))
 }
 
 fn open_runtime_log_file() -> Result<std::fs::File, String> {
@@ -546,6 +788,25 @@ fn is_singbox_running() -> Result<bool, String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.contains("sing-box.exe"))
+}
+
+fn wait_for_mixed_inbound(host: &str, port: u16, timeout: Duration) -> bool {
+    let target = format!("{}:{}", host, port);
+    let started = std::time::Instant::now();
+
+    while started.elapsed() < timeout {
+        if TcpStream::connect(&target).is_ok() {
+            return true;
+        }
+
+        if !is_singbox_running().unwrap_or(false) {
+            return false;
+        }
+
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    false
 }
 
 fn parse_runtime_log_line(id: usize, line: &str) -> Option<RuntimeLogEntry> {

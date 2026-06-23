@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -25,7 +25,13 @@ pub async fn test_node_latency(
     server: String,
     port: u16,
     settings: serde_json::Value,
+    mode: Option<String>,
 ) -> Result<LatencyResult, String> {
+    let mode = mode.unwrap_or_else(|| "connect".to_string());
+    if mode == "connect" {
+        return measure_tcp_connect(&node_id, &server, port);
+    }
+
     let mixed_port = reserve_local_port()?;
     let config_path = write_temp_latency_config(&node_id, &node_type, &server, port, &settings, mixed_port)?;
     let singbox_path = find_singbox_binary()?;
@@ -51,16 +57,44 @@ pub async fn test_node_latency(
 
 #[tauri::command]
 pub async fn test_all_latency(
-    nodes: Vec<(String, String, String, u16, serde_json::Value)>,
+    nodes: Vec<(String, String, String, u16, serde_json::Value, Option<String>)>,
 ) -> Result<Vec<LatencyResult>, String> {
     let mut results = Vec::new();
 
-    for (node_id, node_type, server, port, settings) in nodes {
-        let result = test_node_latency(node_id, node_type, server, port, settings).await?;
+    for (node_id, node_type, server, port, settings, mode) in nodes {
+        let result = test_node_latency(node_id, node_type, server, port, settings, mode).await?;
         results.push(result);
     }
 
     Ok(results)
+}
+
+fn measure_tcp_connect(node_id: &str, server: &str, port: u16) -> Result<LatencyResult, String> {
+    let addr = format!("{}:{}", server, port);
+    let target = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed to resolve node address '{}': {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("No socket address resolved for '{}'", addr))?;
+
+    let started = Instant::now();
+    match TcpStream::connect_timeout(&target, Duration::from_secs(5)) {
+        Ok(_) => Ok(LatencyResult {
+            node_id: node_id.to_string(),
+            latency_ms: started.elapsed().as_millis() as i64,
+            status: "ok".to_string(),
+        }),
+        Err(err) if err.kind() == std::io::ErrorKind::TimedOut => Ok(LatencyResult {
+            node_id: node_id.to_string(),
+            latency_ms: -1,
+            status: "timeout".to_string(),
+        }),
+        Err(_) => Ok(LatencyResult {
+            node_id: node_id.to_string(),
+            latency_ms: -1,
+            status: "error".to_string(),
+        }),
+    }
 }
 
 fn reserve_local_port() -> Result<u16, String> {

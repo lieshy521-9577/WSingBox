@@ -33,6 +33,40 @@ function ProxyControl({
   const selectedProfile = profiles.find((p) => p.tag === selectedOutboundTag);
   const canStart = hasConfig || !!selectedOutboundTag;
 
+  const resolveActiveNode = (tag: string | null, visited = new Set<string>()): ProxyNode | null => {
+    if (!tag || visited.has(tag)) {
+      return null;
+    }
+
+    const node = nodes.find((item) => item.id === tag);
+    if (node) {
+      return node;
+    }
+
+    const profile = profiles.find((item) => item.tag === tag);
+    if (!profile) {
+      return null;
+    }
+
+    visited.add(tag);
+
+    const candidates = [
+      profile.default_outbound,
+      ...profile.outbounds,
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+      const resolved = resolveActiveNode(candidate, visited);
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    return null;
+  };
+
+  const resolvedGroupNode = selectedNode ? null : resolveActiveNode(selectedOutboundTag);
+
   return (
     <div className="border-b border-border bg-surface px-4 py-3">
       <div className="flex items-center justify-between">
@@ -57,7 +91,9 @@ function ProxyControl({
               {selectedNode
                 ? `Active: ${selectedNode.name} (${selectedNode.server}:${selectedNode.port})`
                 : selectedProfile
-                  ? `Active Group: ${selectedProfile.tag} (${selectedProfile.profile_type})`
+                  ? resolvedGroupNode
+                    ? `Active Group: ${selectedProfile.tag} -> ${resolvedGroupNode.name} (${resolvedGroupNode.server}:${resolvedGroupNode.port})`
+                    : `Active Group: ${selectedProfile.tag} (${selectedProfile.profile_type})`
                 : hasConfig
                   ? "Using imported config (auto-select by profile)"
                   : "No node selected"}

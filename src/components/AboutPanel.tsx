@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
 import { BookOpen, ExternalLink, Info, PackageCheck, Rocket } from "lucide-react";
@@ -59,6 +60,13 @@ function AboutPanel() {
           description="Open sample sing-box configuration references."
           actionLabel="Open Samples"
           onAction={() => open("https://sing-box.sagernet.org/examples/")}
+        />
+        <ActionCard
+          icon={<Info size={18} />}
+          title="Exit Application"
+          description="Stop sing-box, restore proxy state, and quit the tray app."
+          actionLabel="Exit Now"
+          onAction={() => invoke("quit_application")}
         />
       </div>
 

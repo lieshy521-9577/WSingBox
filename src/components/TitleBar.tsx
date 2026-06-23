@@ -1,12 +1,14 @@
 import { Minus, Square, X, Sun, Moon } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Theme } from "../hooks/useTheme";
 
 interface TitleBarProps {
   theme: Theme;
   onToggleTheme: () => void;
+  onCloseToTray: () => void;
 }
 
-function TitleBar({ theme, onToggleTheme }: TitleBarProps) {
+function TitleBar({ theme, onToggleTheme, onCloseToTray }: TitleBarProps) {
   return (
     <div
       data-tauri-drag-region
@@ -26,9 +28,7 @@ function TitleBar({ theme, onToggleTheme }: TitleBarProps) {
         <button
           className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-elevated text-content-secondary"
           onClick={() => {
-            import("@tauri-apps/api/window").then((m) =>
-              m.getCurrentWindow().minimize()
-            );
+            void getCurrentWindow().minimize();
           }}
         >
           <Minus size={14} />
@@ -36,20 +36,14 @@ function TitleBar({ theme, onToggleTheme }: TitleBarProps) {
         <button
           className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-elevated text-content-secondary"
           onClick={() => {
-            import("@tauri-apps/api/window").then((m) =>
-              m.getCurrentWindow().toggleMaximize()
-            );
+            void getCurrentWindow().toggleMaximize();
           }}
         >
           <Square size={11} />
         </button>
         <button
           className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-600 text-content-secondary hover:text-white"
-          onClick={() => {
-            import("@tauri-apps/api/window").then((m) =>
-              m.getCurrentWindow().close()
-            );
-          }}
+          onClick={onCloseToTray}
         >
           <X size={14} />
         </button>

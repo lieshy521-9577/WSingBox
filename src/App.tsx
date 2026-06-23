@@ -20,12 +20,15 @@ type Page = "overview" | "nodes" | "logs" | "settings" | "about";
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>("overview");
   const [showAddNode, setShowAddNode] = useState(false);
-  const [showQuitPrompt, setShowQuitPrompt] = useState(false);
   const [configOverview, setConfigOverview] = useState<ConfigOverview | null>(null);
   const [editingRouteRule, setEditingRouteRule] = useState<{ index: number; rule: RouteRuleInfo } | null>(null);
   const [editingNode, setEditingNode] = useState<ProxyNode | null>(null);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
+
+  const hideToTray = useCallback(async () => {
+    await invoke("hide_main_window");
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -33,7 +36,7 @@ function App() {
     const setupCloseHandler = async () => {
       unlisten = await getCurrentWindow().onCloseRequested((event) => {
         event.preventDefault();
-        setShowQuitPrompt(true);
+        void hideToTray();
       });
     };
 
@@ -44,7 +47,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [hideToTray]);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -129,24 +132,10 @@ function App() {
     await loadOverview();
   }, [configOverview, editingRouteRule, loadOverview]);
 
-  const handleMinimizeInstead = useCallback(async () => {
-    setShowQuitPrompt(false);
-    await getCurrentWindow().minimize();
-  }, []);
-
-  const handleExitApp = useCallback(async () => {
-    setShowQuitPrompt(false);
-    try {
-      await invoke("quit_application");
-    } catch (err) {
-      console.error("Failed to quit application cleanly:", err);
-    }
-  }, []);
-
   return (
     <div className="h-screen flex flex-col bg-surface-base">
       {/* Custom title bar */}
-      <TitleBar theme={theme} onToggleTheme={toggleTheme} />
+      <TitleBar theme={theme} onToggleTheme={toggleTheme} onCloseToTray={() => void hideToTray()} />
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar navigation */}
@@ -239,39 +228,6 @@ function App() {
             singbox.updateNode(editingNode.id, name, nodeType, server, port, settings)
           }
         />
-      )}
-
-      {showQuitPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-xl border border-border bg-surface shadow-2xl">
-            <div className="border-b border-border px-5 py-4">
-              <h3 className="text-base font-semibold text-content">Quit SingBox Client</h3>
-              <p className="mt-1 text-sm text-content-secondary">
-                Minimize the window or exit the application?
-              </p>
-            </div>
-            <div className="flex justify-end gap-2 px-5 py-4">
-              <button
-                onClick={() => setShowQuitPrompt(false)}
-                className="rounded-lg px-4 py-2 text-sm text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleMinimizeInstead}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-content transition-colors hover:bg-surface-elevated"
-              >
-                Minimize
-              </button>
-              <button
-                onClick={handleExitApp}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700"
-              >
-                Exit
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {editingRouteRule && (
