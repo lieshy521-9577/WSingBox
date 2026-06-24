@@ -133,11 +133,12 @@ function App() {
   }, [configOverview, editingRouteRule, loadOverview]);
 
   return (
-    <div className="h-screen flex flex-col bg-surface-base">
-      {/* Custom title bar */}
-      <TitleBar theme={theme} onToggleTheme={toggleTheme} onCloseToTray={() => void hideToTray()} />
+    <div className="h-screen overflow-hidden bg-surface-base p-2">
+      <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[28px]">
+        {/* Custom title bar */}
+        <TitleBar theme={theme} onToggleTheme={toggleTheme} onCloseToTray={() => void hideToTray()} />
 
-      <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 overflow-hidden p-3">
         {/* Sidebar navigation */}
         <Sidebar
           currentPage={currentPage}
@@ -152,7 +153,7 @@ function App() {
         />
 
         {/* Main content */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+        <main className="workspace-shell ml-3 flex flex-1 flex-col overflow-hidden rounded-[24px] border border-border/70">
           {/* Proxy control bar */}
           <ProxyControl
             isRunning={singbox.isRunning}
@@ -169,24 +170,32 @@ function App() {
           />
 
           {/* Page content */}
-          <div className="flex-1 overflow-auto p-4">
+          <div className="app-scroll flex-1 overflow-auto px-5 pb-5 pt-4">
             {currentPage === "overview" && (
               configOverview ? (
-                <ConfigOverviewPanel
-                  overview={configOverview}
-                  onEditRouteRule={handleEditRouteRule}
-                  selectedOutboundTag={singbox.selectedOutboundTag}
-                  onSelectOutbound={singbox.setSelectedOutboundTag}
-                />
+                <div className="page-entrance">
+                  <ConfigOverviewPanel
+                    overview={configOverview}
+                    onEditRouteRule={handleEditRouteRule}
+                    selectedOutboundTag={singbox.selectedOutboundTag}
+                    onSelectOutbound={singbox.setSelectedOutboundTag}
+                  />
+                </div>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-content-muted">
-                  <p className="text-sm mb-3">No configuration loaded</p>
+                <div className="page-entrance flex h-full items-center justify-center">
+                  <div className="panel-card w-full max-w-xl rounded-[28px] p-8 text-center">
+                    <p className="section-label mb-3">Ready to configure</p>
+                    <h2 className="text-2xl font-semibold tracking-tight text-content">No configuration loaded</h2>
+                    <p className="mx-auto mt-3 max-w-md text-sm text-content-secondary">
+                      Import a sing-box profile to inspect routes, manage nodes, and control proxy behavior from one workspace.
+                    </p>
                   <button
                     onClick={handleImportConfig}
-                    className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded-lg transition-colors"
+                      className="mt-6 rounded-2xl bg-primary-600 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                   >
                     Import sing-box Config
                   </button>
+                  </div>
                 </div>
               )
             )}
@@ -210,6 +219,7 @@ function App() {
             {currentPage === "about" && <AboutPanel />}
           </div>
         </main>
+      </div>
       </div>
 
       {/* Add node modal */}

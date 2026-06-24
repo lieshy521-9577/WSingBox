@@ -11,6 +11,9 @@ import {
   ChevronRight,
   CheckCircle2,
   MousePointerClick,
+  Network,
+  Layers3,
+  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
@@ -40,37 +43,95 @@ function ConfigOverviewPanel({
     (o) => !["direct", "block", "selector", "urltest"].includes(o.outbound_type)
   );
   const groups = overview.outbounds.filter((o) => o.is_group);
+  const activeOutbound = overview.outbounds.find((o) => o.tag === selectedOutboundTag) ?? null;
+  const primaryInbound = overview.inbounds[0] ?? null;
+  const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   return (
-    <div className="space-y-4">
-      {/* File path */}
-      <div className="flex items-center gap-2 text-xs text-content-secondary bg-card/50 px-3 py-2 rounded-lg">
-        <FileJson size={14} className="shrink-0" />
-        <span className="truncate">{overview.file_path}</span>
+    <div className="space-y-5">
+      <div className="panel-card rounded-[24px] p-5">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="space-y-4">
+            <p className="section-label mb-2">Configuration Overview</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-content">Runtime configuration map</h2>
+            <p className="mt-2 max-w-2xl text-sm text-content-secondary">
+              Review inbound mode, outbound hierarchy, DNS routing, and rule assets from the current active profile.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <SummaryPill
+                icon={<Sparkles size={13} />}
+                label="Active target"
+                value={activeOutbound?.tag ?? "Not selected"}
+              />
+              <SummaryPill
+                icon={<Layers3 size={13} />}
+                label="Groups"
+                value={`${groups.length} available`}
+              />
+              <SummaryPill
+                icon={<Network size={13} />}
+                label="Inbound mode"
+                value={primaryInbound?.inbound_type ?? "Unknown"}
+              />
+            </div>
+          </div>
+          <div className="surface-block rounded-2xl px-4 py-3 xl:min-w-[20rem]">
+            <div className="flex items-center gap-2 text-xs text-content-secondary">
+              <FileJson size={14} className="shrink-0" />
+              <span className="section-label !tracking-[0.14em]">Active file</span>
+            </div>
+            <span className="mt-1 block max-w-[34rem] truncate text-sm font-medium text-content">{overview.file_path}</span>
+          </div>
+        </div>
       </div>
 
-      {/* Stats summary bar */}
-      <div className="grid grid-cols-4 gap-3">
-        <StatCard icon={<Server size={16} />} label="Outbounds" value={String(overview.outbounds.length)} color="text-blue-500 dark:text-blue-400" />
-        <StatCard icon={<Globe size={16} />} label="DNS Servers" value={String(overview.dns_servers.length)} color="text-green-500 dark:text-green-400" />
-        <StatCard icon={<Router size={16} />} label="Route Rules" value={String(overview.route_rules_count)} color="text-purple-500 dark:text-purple-400" />
-        <StatCard icon={<Database size={16} />} label="Rule Sets" value={String(overview.rule_sets.length)} color="text-orange-500 dark:text-orange-400" />
+      {/* File path */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatCard
+          icon={<Server size={16} />}
+          label="Outbounds"
+          value={String(overview.outbounds.length)}
+          meta={`${proxyNodes.length} nodes / ${groups.length} groups`}
+          color="text-blue-500 dark:text-blue-400"
+        />
+        <StatCard
+          icon={<Globe size={16} />}
+          label="DNS Servers"
+          value={String(overview.dns_servers.length)}
+          meta={overview.dns_servers[0]?.server ?? "No DNS server"}
+          color="text-green-500 dark:text-green-400"
+        />
+        <StatCard
+          icon={<Router size={16} />}
+          label="Route Rules"
+          value={String(overview.route_rules_count)}
+          meta={`${rulesWithOutbound} rules target outbound`}
+          color="text-purple-500 dark:text-purple-400"
+        />
+        <StatCard
+          icon={<Database size={16} />}
+          label="Rule Sets"
+          value={String(overview.rule_sets.length)}
+          meta={overview.rule_sets[0]?.tag ?? "No remote set"}
+          color="text-orange-500 dark:text-orange-400"
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Section
           sectionKey="inbounds"
           title="Inbounds"
+          count={overview.inbounds.length}
           icon={<ArrowRightLeft size={15} />}
           open={openSections.inbounds}
           onToggle={toggleSection}
         >
           {overview.inbounds.map((inbound, idx) => (
-            <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
+            <div key={idx} className="subtle-row flex items-center justify-between rounded-2xl p-3">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
                   {inbound.inbound_type.toUpperCase()}
@@ -86,6 +147,7 @@ function ConfigOverviewPanel({
           <Section
             sectionKey="outboundGroups"
             title="Outbound Groups"
+            count={groups.length}
             icon={<Shield size={15} />}
             open={openSections.outboundGroups}
             onToggle={toggleSection}
@@ -97,10 +159,10 @@ function ConfigOverviewPanel({
                 type="button"
                 key={idx}
                 onClick={() => onSelectOutbound(group.tag)}
-                className={`w-full p-2.5 rounded-lg space-y-1.5 text-left transition-all ${
+                className={`w-full space-y-2 rounded-2xl p-3 text-left transition-all ${
                   isSelected
                     ? "bg-primary-600/10 border border-primary-500/30"
-                    : "bg-card/50 border border-transparent hover:border-border hover:bg-card"
+                    : "subtle-row"
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -115,14 +177,21 @@ function ConfigOverviewPanel({
                     </span>
                     <span className="text-sm text-content font-medium">{group.tag}</span>
                   </div>
-                  <span className="text-xs text-content-secondary">{group.details}</span>
+                  <div className="flex items-center gap-2">
+                    {isSelected && <span className="status-chip status-chip-primary">Active</span>}
+                    <span className="text-xs text-content-secondary">{group.details}</span>
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5 pl-1">
                   {group.group_members.map((member, mIdx) => (
-                    <span key={mIdx} className="text-[11px] bg-surface-elevated text-content-secondary px-2 py-0.5 rounded">
+                    <span key={mIdx} className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[11px] text-content-secondary">
                       {member}
                     </span>
                   ))}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-content-muted">
+                  <span>{group.group_members.length} candidates</span>
+                  <span>Click to route traffic through this group</span>
                 </div>
               </button>
             )})}
@@ -132,6 +201,7 @@ function ConfigOverviewPanel({
         <Section
           sectionKey="proxyNodes"
           title="Proxy Nodes"
+          count={proxyNodes.length}
           icon={<Server size={15} />}
           open={openSections.proxyNodes}
           onToggle={toggleSection}
@@ -143,10 +213,10 @@ function ConfigOverviewPanel({
               type="button"
               key={idx}
               onClick={() => onSelectOutbound(node.tag)}
-              className={`flex w-full items-center justify-between p-2.5 rounded-lg text-left transition-all ${
+              className={`flex w-full items-center justify-between rounded-2xl p-3 text-left transition-all ${
                 isSelected
                   ? "bg-primary-600/10 border border-primary-500/30"
-                  : "bg-card/50 border border-transparent hover:border-border hover:bg-card"
+                  : "subtle-row"
               }`}
             >
               <div className="flex items-center gap-2">
@@ -161,6 +231,7 @@ function ConfigOverviewPanel({
                 <span className="text-sm text-content">{node.tag}</span>
               </div>
               <div className="text-right">
+                {isSelected && <p className="mb-1 text-[11px] font-medium text-primary-500">Current route target</p>}
                 <p className="text-xs text-content-secondary">
                   {node.server}{node.port > 0 && `:${node.port}`}
                 </p>
@@ -173,13 +244,14 @@ function ConfigOverviewPanel({
         <Section
           sectionKey="dnsServers"
           title="DNS Servers"
+          count={overview.dns_servers.length}
           icon={<Globe size={15} />}
           open={openSections.dnsServers}
           onToggle={toggleSection}
         >
           <div className="grid grid-cols-1 gap-1.5">
             {overview.dns_servers.map((dns, idx) => (
-              <div key={idx} className="flex items-center justify-between p-2.5 bg-card/50 rounded-lg">
+              <div key={idx} className="subtle-row flex items-center justify-between rounded-2xl p-3">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded font-medium">
                     {dns.dns_type.toUpperCase()}
@@ -196,13 +268,14 @@ function ConfigOverviewPanel({
           <Section
             sectionKey="routeRules"
             title="Route Rules"
+            count={overview.route_rules.length}
             icon={<Router size={15} />}
             open={openSections.routeRules}
             onToggle={toggleSection}
           >
             <div className="space-y-1.5">
               {overview.route_rules.map((rule, idx) => (
-                <div key={idx} className="flex items-start justify-between gap-3 rounded-lg bg-card/50 p-2.5">
+                <div key={idx} className="subtle-row flex items-start justify-between gap-3 rounded-2xl p-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] bg-purple-500/20 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded font-medium">
@@ -239,13 +312,14 @@ function ConfigOverviewPanel({
           <Section
             sectionKey="ruleSets"
             title="Rule Sets"
+            count={overview.rule_sets.length}
             icon={<Database size={15} />}
             open={openSections.ruleSets}
             onToggle={toggleSection}
           >
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
               {overview.rule_sets.map((rs, idx) => (
-                <div key={idx} className="flex items-center gap-2 p-2 bg-card/50 rounded-lg">
+                <div key={idx} className="subtle-row flex items-center gap-2 rounded-2xl p-3">
                   <span className="text-[10px] bg-orange-500/20 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded font-medium">
                     {rs.rule_type.toUpperCase()}
                   </span>
@@ -260,12 +334,39 @@ function ConfigOverviewPanel({
   );
 }
 
-function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
+function SummaryPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="bg-card/50 border border-border rounded-lg p-3 text-center">
-      <div className={`flex justify-center mb-1 ${color}`}>{icon}</div>
-      <p className="text-lg font-bold text-content">{value}</p>
-      <p className="text-[10px] text-content-secondary">{label}</p>
+    <div className="surface-block flex items-center gap-2 rounded-full px-3 py-2">
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-elevated text-content-secondary">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
+        <p className="truncate text-xs font-medium text-content">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  meta,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  meta: string;
+  color: string;
+}) {
+  return (
+    <div className="panel-card rounded-[22px] p-4">
+      <div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
+      <p className="text-2xl font-semibold tracking-tight text-content">{value}</p>
+      <p className="mt-1 text-[11px] uppercase tracking-[0.15em] text-content-secondary">{label}</p>
+      <p className="mt-2 truncate text-xs text-content-muted">{meta}</p>
     </div>
   );
 }
@@ -273,6 +374,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
 function Section({
   sectionKey,
   title,
+  count,
   icon,
   children,
   open,
@@ -280,23 +382,28 @@ function Section({
 }: {
   sectionKey: string;
   title: string;
+  count: number;
   icon: React.ReactNode;
   children: React.ReactNode;
   open: boolean;
   onToggle: (key: string) => void;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card/40 p-3">
+    <div className="panel-card rounded-[24px] p-4">
       <button
         type="button"
         onClick={() => onToggle(sectionKey)}
-        className="mb-2 flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-surface-elevated/60"
+        className="mb-3 flex w-full items-center gap-2 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-surface-elevated/60"
       >
         <span className="text-content-secondary">
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
-        <span className="text-content-secondary">{icon}</span>
-        <h3 className="text-sm font-medium text-content">{title}</h3>
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-elevated text-content-secondary">{icon}</span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium text-content">{title}</h3>
+          <p className="text-[11px] text-content-muted">Expand to inspect current configuration</p>
+        </div>
+        <span className="status-chip">{count}</span>
       </button>
       {open && <div className="space-y-1.5">{children}</div>}
     </div>

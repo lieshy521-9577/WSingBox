@@ -139,16 +139,57 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-content">Client Settings</h2>
-        <p className="mt-1 text-sm text-content-secondary">
-          These settings are applied to imported configs and generated configs.
-        </p>
+    <div className="page-entrance space-y-6">
+      <div className="panel-card rounded-[24px] p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <p className="section-label mb-2">Client Settings</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-content">Routing and runtime preferences</h2>
+            <p className="mt-2 text-sm text-content-secondary">
+              These settings are applied to imported configs and generated configs.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <SettingsPill label="Mode" value={settings.tun_enabled ? "TUN enabled" : "Mixed inbound"} />
+            <SettingsPill label="DNS" value={settings.dns_final || "Unset"} />
+            <SettingsPill label="Port" value={String(settings.mixed_port)} />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <SettingsMetric
+          icon={<ArrowRightLeft size={16} />}
+          label="Inbound"
+          value={settings.mixed_listen}
+          meta={`:${settings.mixed_port}`}
+          color="text-sky-500 dark:text-sky-400"
+        />
+        <SettingsMetric
+          icon={<Shield size={16} />}
+          label="TUN"
+          value={settings.tun_enabled ? "On" : "Off"}
+          meta={settings.tun_interface_name}
+          color="text-emerald-500 dark:text-emerald-400"
+        />
+        <SettingsMetric
+          icon={<Globe size={16} />}
+          label="DNS"
+          value={settings.dns_final}
+          meta={settings.dns_strategy}
+          color="text-green-500 dark:text-green-400"
+        />
+        <SettingsMetric
+          icon={<Database size={16} />}
+          label="Servers"
+          value={String(settings.dns_servers.length)}
+          meta="DNS entries"
+          color="text-orange-500 dark:text-orange-400"
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <div className="rounded-xl border border-border bg-card/50 p-2">
+        <div className="panel-card rounded-[24px] p-2">
           <div className="mb-2 px-3 py-2 text-xs uppercase tracking-wide text-content-muted">
             Settings Menu
           </div>
@@ -160,14 +201,16 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
                   key={section.id}
                   type="button"
                   onClick={() => setActiveSection(section.id)}
-                  className={`w-full rounded-lg px-3 py-2.5 text-left transition-colors ${
+                  className={`w-full rounded-2xl px-3 py-3 text-left transition-colors ${
                     active
                       ? "bg-primary-600/15 text-primary-600 dark:text-primary-400"
                       : "text-content-secondary hover:bg-surface-elevated hover:text-content"
                   }`}
                 >
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    {section.icon}
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${active ? "bg-primary-600/15" : "bg-surface-elevated"}`}>
+                      {section.icon}
+                    </span>
                     <span>{section.label}</span>
                   </div>
                   <p className="mt-1 text-[11px]">{section.description}</p>
@@ -177,9 +220,9 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card/50 p-4">
+        <div className="panel-card rounded-[24px] p-5">
           {activeSection === "inbound" && (
-            <section>
+            <section className="space-y-4">
               <div className="mb-4">
                 <h3 className="text-sm font-medium text-content">Inbound</h3>
                 <p className="mt-1 text-xs text-content-secondary">
@@ -209,7 +252,7 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
           )}
 
           {activeSection === "ruleSets" && (
-            <section>
+            <section className="space-y-4">
               <div className="mb-4">
                 <h3 className="text-sm font-medium text-content">Rule Sets</h3>
                 <p className="mt-1 text-xs text-content-secondary">
@@ -229,7 +272,7 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
           )}
 
           {activeSection === "tun" && (
-            <section>
+            <section className="space-y-4">
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-medium text-content">TUN</h3>
@@ -308,7 +351,7 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
           )}
 
           {activeSection === "dns" && (
-            <section>
+            <section className="space-y-4">
               <div className="mb-4">
                 <h3 className="text-sm font-medium text-content">DNS</h3>
                 <p className="mt-1 text-xs text-content-secondary">
@@ -349,32 +392,64 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500 dark:text-red-300">
+        <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-3 text-sm text-red-500 dark:text-red-300">
           {error}
         </div>
       )}
       {message && (
-        <div className="rounded-lg border border-green-500/20 bg-green-500/10 px-3 py-2 text-sm text-green-600 dark:text-green-300">
+        <div className="rounded-2xl border border-green-500/20 bg-green-500/10 px-3 py-3 text-sm text-green-600 dark:text-green-300">
           {message}
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="panel-card flex items-center gap-3 rounded-[24px] p-4">
         <button
           onClick={handleSave}
           disabled={saving}
-          className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+          className="btn-primary rounded-2xl px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>
         <button
           onClick={loadSettings}
           disabled={saving}
-          className="rounded-lg border border-border px-4 py-2 text-sm text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content disabled:opacity-50"
+          className="btn-secondary rounded-2xl px-4 py-2.5 text-sm transition-colors disabled:opacity-50"
         >
           Reload
         </button>
       </div>
+    </div>
+  );
+}
+
+function SettingsPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-surface-elevated/75 px-3 py-1.5 text-[11px] text-content-secondary">
+      <span className="uppercase tracking-[0.14em] text-content-muted">{label}</span>
+      <strong className="text-content">{value}</strong>
+    </span>
+  );
+}
+
+function SettingsMetric({
+  icon,
+  label,
+  value,
+  meta,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  meta: string;
+  color: string;
+}) {
+  return (
+    <div className="panel-card rounded-[22px] p-4">
+      <div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
+      <p className="truncate text-xl font-semibold tracking-tight text-content">{value}</p>
+      <p className="mt-1 text-[11px] uppercase tracking-[0.15em] text-content-secondary">{label}</p>
+      <p className="mt-2 truncate text-xs text-content-muted">{meta}</p>
     </div>
   );
 }
@@ -390,7 +465,7 @@ function Field({
 }) {
   return (
     <label className={`block ${className}`}>
-      <span className="mb-1 block text-xs text-content-secondary">{label}</span>
+      <span className="mb-1.5 block text-xs text-content-secondary">{label}</span>
       {children}
     </label>
   );
@@ -406,7 +481,7 @@ function Toggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-sm text-content">
+    <label className="surface-block flex items-center justify-between rounded-2xl px-3 py-2.5 text-sm text-content transition-transform duration-200 hover:-translate-y-[1px]">
       <span>{label}</span>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </label>

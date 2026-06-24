@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use crate::apply_tray_icon;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use std::fs::OpenOptions;
@@ -88,6 +89,7 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     }
 
     set_system_proxy_internal(&proxy_host, proxy_port)?;
+    let _ = apply_tray_icon(&app_handle, true);
 
     Ok(if started_with_fallback {
         "sing-box started with remote rule-set bootstrap skipped".to_string()
@@ -100,14 +102,16 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
 /// Stop sing-box core process and clear system proxy
 #[tauri::command]
-pub async fn stop_singbox() -> Result<String, String> {
+pub async fn stop_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
     cleanup_before_exit()?;
+    let _ = apply_tray_icon(&app_handle, false);
     Ok("sing-box stopped".to_string())
 }
 
 #[tauri::command]
 pub async fn quit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
     cleanup_before_exit()?;
+    let _ = apply_tray_icon(&app_handle, false);
     app_handle.exit(0);
     Ok(())
 }
@@ -126,6 +130,14 @@ pub async fn hide_main_window(app_handle: tauri::AppHandle) -> Result<(), String
         .map_err(|e| format!("Failed to hide main window: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn set_tray_connection_state(
+    app_handle: tauri::AppHandle,
+    connected: bool,
+) -> Result<(), String> {
+    apply_tray_icon(&app_handle, connected)
 }
 
 pub fn cleanup_before_exit() -> Result<(), String> {

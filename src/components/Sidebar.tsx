@@ -35,23 +35,35 @@ function Sidebar({
   ];
 
   return (
-    <aside className="w-48 bg-sidebar border-r border-border flex flex-col">
-      {/* Status indicator */}
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              isRunning ? "bg-green-400 animate-pulse" : "bg-gray-400 dark:bg-gray-500"
-            }`}
-          />
-          <span className="text-xs text-content-secondary">
-            {isRunning ? "Connected" : "Disconnected"}
-          </span>
+    <aside className="panel-card flex w-64 flex-col overflow-hidden rounded-[24px] bg-sidebar/90">
+      <div className="border-b border-border/80 px-4 py-4">
+        <p className="section-label mb-2">Session</p>
+        <div className="surface-block rounded-2xl px-3 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div
+                className={`h-2.5 w-2.5 rounded-full ${
+                  isRunning ? "bg-green-400 animate-pulse" : "bg-gray-400 dark:bg-gray-500"
+                }`}
+              />
+              <span className="text-xs font-medium text-content-secondary">
+                {isRunning ? "Connected" : "Disconnected"}
+              </span>
+            </div>
+            <span className={`status-pill ${isRunning ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-slate-400/10 text-slate-600 dark:text-slate-300"}`}>
+              {isRunning ? "Live" : "Idle"}
+            </span>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <SessionTag label="Engine" value={isRunning ? "Running" : "Stopped"} />
+            <SessionTag label="Tray" value="Enabled" />
+          </div>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 space-y-1">
+      <nav className="flex-1 space-y-1 px-3 py-4">
+        <p className="section-label px-2 pb-2">Workspace</p>
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = currentPage === item.id;
@@ -59,75 +71,104 @@ function Sidebar({
             <button
               key={item.id}
               onClick={() => onPageChange(item.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm transition-all ${
                 isActive
-                  ? "bg-primary-600/20 text-primary-600 dark:text-primary-400"
+                  ? "bg-primary-600/14 text-primary-700 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.14)] dark:text-primary-300"
                   : "text-content-secondary hover:bg-surface-elevated hover:text-content"
               }`}
             >
-              <Icon size={16} />
-              {item.label}
+              <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${
+                isActive ? "bg-primary-600/15" : "bg-white/70 dark:bg-slate-900/30"
+              }`}>
+                <Icon size={16} />
+              </span>
+              <span className="font-medium">{item.label}</span>
             </button>
           );
         })}
       </nav>
 
       {/* Bottom actions */}
-      <div className="border-t border-border p-2 space-y-2">
-        <button
-          onClick={onImportConfig}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-content-secondary hover:bg-surface-elevated hover:text-content transition-colors"
-        >
-          <FileUp size={16} />
-          Import Profile
-        </button>
+      <div className="border-t border-border/80 px-3 py-3">
+        <div className="surface-block mb-3 rounded-2xl p-2">
+          <button
+            onClick={onImportConfig}
+            className="btn-primary flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition-colors"
+          >
+            <FileUp size={16} />
+            Import Profile
+          </button>
+        </div>
         {configProfiles.length > 0 && (
-          <div className="space-y-1">
-            <div className="px-3 pt-1 text-[11px] uppercase tracking-wide text-content-muted">
-              Saved Profiles
+          <div className="mb-3 space-y-1">
+            <div className="flex items-center justify-between px-2 pb-1">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-content-muted">
+                Saved Profiles
+              </div>
+              <span className="status-chip">{configProfiles.length}</span>
             </div>
-            {configProfiles.map((profile) => {
-              const isActive = activeConfigProfileId === profile.id;
-              return (
-                <div
-                  key={profile.id}
-                  className={`flex items-center gap-2 rounded-lg px-2 py-1 ${
-                    isActive ? "bg-primary-600/10" : ""
-                  }`}
-                >
-                  <button
-                    onClick={() => onSwitchConfigProfile(profile.id)}
-                    className={`flex flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+            <div className="max-h-52 space-y-1 overflow-auto pr-1">
+              {configProfiles.map((profile) => {
+                const isActive = activeConfigProfileId === profile.id;
+                return (
+                  <div
+                    key={profile.id}
+                    className={`flex items-center gap-2 rounded-2xl border px-2 py-1.5 transition-all ${
                       isActive
-                        ? "text-primary-600 dark:text-primary-400"
-                        : "text-content-secondary hover:bg-surface-elevated hover:text-content"
+                        ? "border-primary-500/20 bg-primary-600/10"
+                        : "border-transparent bg-white/45 hover:border-border/70 dark:bg-slate-900/20"
                     }`}
-                    title={profile.source_path}
                   >
-                    <FolderOpen size={14} />
-                    <span className="truncate">{profile.name}</span>
-                  </button>
-                  <button
-                    onClick={() => onDeleteConfigProfile(profile.id)}
-                    className="rounded p-1.5 text-content-muted transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
-                    title="Delete profile"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              );
-            })}
+                    <button
+                      onClick={() => onSwitchConfigProfile(profile.id)}
+                      className={`flex flex-1 items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors ${
+                        isActive
+                          ? "text-primary-700 dark:text-primary-300"
+                          : "text-content-secondary hover:text-content"
+                      }`}
+                      title={profile.source_path}
+                    >
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-elevated">
+                        <FolderOpen size={14} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{profile.name}</span>
+                        <span className="block truncate text-[10px] text-content-muted">
+                          saved config
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => onDeleteConfigProfile(profile.id)}
+                      className="rounded-xl p-2 text-content-muted transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
+                      title="Delete profile"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
         <button
           onClick={onClearConfig}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-content-secondary hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+          className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm text-content-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
         >
           <Trash2 size={16} />
           Clear All Profiles
         </button>
       </div>
     </aside>
+  );
+}
+
+function SessionTag({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-white/65 px-2.5 py-1 text-[10px] text-content-secondary dark:bg-slate-900/35">
+      <span className="uppercase tracking-[0.14em] text-content-muted">{label}</span>
+      <strong className="text-content">{value}</strong>
+    </span>
   );
 }
 

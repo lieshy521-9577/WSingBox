@@ -2,16 +2,55 @@ mod commands;
 
 use commands::{config, latency, proxy, singbox as singbox_cmd};
 use tauri::{
+    image::Image,
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+
+const APP_ICON: &[u8] = include_bytes!("../icons/icon.ico");
+const TRAY_ICON_DISCONNECTED: &[u8] = include_bytes!("../icons/tray-disconnected.ico");
+const TRAY_ICON_CONNECTED: &[u8] = include_bytes!("../icons/tray-connected.ico");
+
+pub(crate) fn tray_icon_image(connected: bool) -> tauri::Result<Image<'static>> {
+    let bytes = if connected {
+        TRAY_ICON_CONNECTED
+    } else {
+        TRAY_ICON_DISCONNECTED
+    };
+    Image::from_bytes(bytes)
+}
+
+pub(crate) fn apply_tray_icon(app: &tauri::AppHandle, connected: bool) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("main-tray")
+        .ok_or("Tray icon is not initialized".to_string())?;
+    let icon = tray_icon_image(connected)
+        .map_err(|e| format!("Failed to load tray icon: {}", e))?;
+    let tooltip = if connected {
+        "SingBox Client - Connected"
+    } else {
+        "SingBox Client - Disconnected"
+    };
+    tray
+        .set_icon(Some(icon))
+        .map_err(|e| format!("Failed to update tray icon: {}", e))?;
+    tray
+        .set_tooltip(Some(tooltip))
+        .map_err(|e| format!("Failed to update tray tooltip: {}", e))?;
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let icon = Image::from_bytes(APP_ICON)?;
+                let _ = window.set_icon(icon);
+            }
+
             let tray_menu = MenuBuilder::new(app)
                 .text("show_window", "Show Window")
                 .text("hide_window", "Hide Window")
@@ -19,10 +58,7 @@ pub fn run() {
                 .text("quit_app", "Quit")
                 .build()?;
 
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .ok_or("Tray icon asset is not available")?;
+            let icon = tray_icon_image(false)?;
 
             TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
@@ -82,6 +118,7 @@ pub fn run() {
             singbox_cmd::hide_main_window,
             singbox_cmd::get_runtime_logs,
             singbox_cmd::clear_runtime_logs,
+            singbox_cmd::set_tray_connection_state,
             // system proxy management
             proxy::set_system_proxy,
             proxy::clear_system_proxy,

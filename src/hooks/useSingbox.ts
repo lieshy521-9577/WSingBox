@@ -23,6 +23,14 @@ export function useSingbox() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const syncTrayConnectionState = useCallback(async (connected: boolean) => {
+    try {
+      await invoke("set_tray_connection_state", { connected });
+    } catch (err) {
+      console.error("Failed to sync tray connection state:", err);
+    }
+  }, []);
+
   // Load nodes and check status on mount
   useEffect(() => {
     loadNodes();
@@ -71,10 +79,11 @@ export function useSingbox() {
       setIsRunning(running);
       const proxy = await invoke<boolean>("get_proxy_status");
       setProxyEnabled(proxy);
+      await syncTrayConnectionState(running);
     } catch (err) {
       console.error("Status check failed:", err);
     }
-  }, []);
+  }, [syncTrayConnectionState]);
 
   const loadActiveOutbound = useCallback(async () => {
     try {
@@ -256,6 +265,7 @@ export function useSingbox() {
         await invoke<string>("start_singbox");
         setIsRunning(true);
         setProxyEnabled(true);
+        await syncTrayConnectionState(true);
       } else {
         if (!selectedOutboundTag) {
           setError("Please select a node or import a config first");
@@ -266,6 +276,7 @@ export function useSingbox() {
         await invoke<string>("start_singbox");
         setIsRunning(true);
         setProxyEnabled(true);
+        await syncTrayConnectionState(true);
       }
     } catch (err) {
       setError(String(err));
@@ -279,13 +290,14 @@ export function useSingbox() {
       setLoading(true);
       await invoke("stop_singbox");
       await checkStatus();
+      await syncTrayConnectionState(false);
       setError(null);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [checkStatus]);
+  }, [checkStatus, syncTrayConnectionState]);
 
   const toggleProxy = useCallback(async () => {
     if (isRunning) {
