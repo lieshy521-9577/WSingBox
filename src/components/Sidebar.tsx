@@ -54,7 +54,7 @@ function Sidebar({
               {isRunning ? "Live" : "Idle"}
             </span>
           </div>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <SessionTag label="Engine" value={isRunning ? "Running" : "Stopped"} />
             <SessionTag label="Tray" value="Enabled" />
           </div>
@@ -168,9 +168,9 @@ function Sidebar({
 
 function SessionTag({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-white/65 px-2.5 py-1 text-[10px] text-content-secondary dark:bg-slate-900/35">
-      <span className="uppercase tracking-[0.14em] text-content-muted">{label}</span>
-      <strong className="text-content">{value}</strong>
+    <span className="inline-flex min-w-0 items-center justify-between gap-1 rounded-full border border-border/80 bg-white/65 px-2 py-1 text-[10px] text-content-secondary dark:bg-slate-900/35">
+      <span className="truncate uppercase tracking-[0.14em] text-content-muted">{label}</span>
+      <strong className="truncate text-content">{value}</strong>
     </span>
   );
 }
