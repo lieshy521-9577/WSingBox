@@ -1,4 +1,4 @@
-import { Minus, Square, X, Sun, Moon } from "lucide-react";
+import { Minus, Square, X, Sun, Moon, Package2 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Theme } from "../hooks/useTheme";
 
@@ -13,8 +13,8 @@ function TitleBar({ theme, onToggleTheme, onCloseToTray }: TitleBarProps) {
     <div className="flex h-11 items-center justify-between border-b border-border/80 bg-titlebar px-3">
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-xl border border-sky-500/15 bg-sky-500/12 text-[11px] font-semibold text-sky-700 dark:text-sky-300">
-            SB
+          <div className="flex h-7 w-7 items-center justify-center rounded-xl border border-sky-500/15 bg-sky-500/12 text-sky-600 shadow-sm shadow-sky-500/10 dark:text-sky-300">
+            <Package2 size={14} strokeWidth={2.2} />
           </div>
           <div>
             <p className="text-sm font-semibold text-content">SingBox Client</p>

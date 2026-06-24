@@ -1,411 +1,457 @@
+import { useMemo, useState } from "react";
 import {
-  Globe,
-  Shield,
-  Router,
-  Server,
-  ArrowRightLeft,
-  Database,
-  FileJson,
-  Pencil,
-  ChevronDown,
   ChevronRight,
-  CheckCircle2,
-  MousePointerClick,
-  Network,
+  FileJson,
+  Globe,
   Layers3,
+  Network,
+  Pencil,
+  Route,
   Sparkles,
 } from "lucide-react";
-import { useState } from "react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
+
+type OverviewSection = "nodes" | "dns" | "rules" | "ruleSets";
 
 interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
   selectedOutboundTag: string | null;
-  onSelectOutbound: (tag: string) => void;
 }
 
 function ConfigOverviewPanel({
   overview,
   onEditRouteRule,
   selectedOutboundTag,
-  onSelectOutbound,
 }: ConfigOverviewPanelProps) {
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    inbounds: true,
-    outboundGroups: true,
-    proxyNodes: true,
-    dnsServers: true,
-    routeRules: true,
-    ruleSets: true,
-  });
-  const proxyNodes = overview.outbounds.filter(
-    (o) => !["direct", "block", "selector", "urltest"].includes(o.outbound_type)
-  );
-  const groups = overview.outbounds.filter((o) => o.is_group);
-  const activeOutbound = overview.outbounds.find((o) => o.tag === selectedOutboundTag) ?? null;
-  const primaryInbound = overview.inbounds[0] ?? null;
-  const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
+  const [activeSection, setActiveSection] = useState<OverviewSection>("nodes");
 
-  const toggleSection = (key: string) => {
-    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  const proxyNodes = useMemo(
+    () =>
+      overview.outbounds.filter(
+        (item) => !["direct", "block", "selector", "urltest"].includes(item.outbound_type)
+      ),
+    [overview.outbounds]
+  );
+  const groups = useMemo(() => overview.outbounds.filter((item) => item.is_group), [overview.outbounds]);
+  const dnsServer = overview.dns_servers[0] ?? null;
+  const primaryInbound = overview.inbounds[0] ?? null;
+  const activeOutbound = overview.outbounds.find((item) => item.tag === selectedOutboundTag) ?? null;
+  const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
+  const pathSegments = overview.file_path.split(/[/\\]/);
+  const activeFileName = pathSegments[pathSegments.length - 1] || overview.file_path;
+
+  const sectionTabs: Array<{
+    id: OverviewSection;
+    label: string;
+    icon: React.ReactNode;
+    count: string;
+  }> = [
+    { id: "nodes", label: "Nodes", icon: <Network size={13} />, count: `${proxyNodes.length}` },
+    { id: "dns", label: "DNS", icon: <Globe size={13} />, count: `${overview.dns_servers.length}` },
+    { id: "rules", label: "Rules", icon: <Route size={13} />, count: `${overview.route_rules_count}` },
+    { id: "ruleSets", label: "Rule Sets", icon: <FileJson size={13} />, count: `${overview.rule_sets.length}` },
+  ];
 
   return (
-    <div className="space-y-5">
-      <div className="panel-card rounded-[24px] p-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="space-y-4">
-            <p className="section-label mb-2">Configuration Overview</p>
-            <h2 className="text-2xl font-semibold tracking-tight text-content">Runtime configuration map</h2>
-            <p className="mt-2 max-w-2xl text-sm text-content-secondary">
-              Review inbound mode, outbound hierarchy, DNS routing, and rule assets from the current active profile.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <SummaryPill
+    <div className="space-y-3">
+      <section className="panel-card rounded-[22px] p-4">
+        <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:items-start">
+          <div className="space-y-3">
+            <div>
+              <p className="section-label mb-1.5">Configuration Overview</p>
+              <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">
+                Runtime snapshot
+              </h2>
+              <p className="mt-2 max-w-2xl text-[13px] leading-5 text-content-secondary">
+                A compact view of the active runtime state and the imported profile behind it.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <SnapshotChip
                 icon={<Sparkles size={13} />}
-                label="Active target"
+                label="Route target"
                 value={activeOutbound?.tag ?? "Not selected"}
+                detail={
+                  activeOutbound
+                    ? activeOutbound.is_group
+                      ? `${activeOutbound.outbound_type} group`
+                      : `${activeOutbound.outbound_type}${activeOutbound.server ? ` - ${activeOutbound.server}` : ""}`
+                    : "Choose a node or group"
+                }
               />
-              <SummaryPill
-                icon={<Layers3 size={13} />}
-                label="Groups"
-                value={`${groups.length} available`}
-              />
-              <SummaryPill
+              <SnapshotChip
                 icon={<Network size={13} />}
-                label="Inbound mode"
+                label="Inbound"
                 value={primaryInbound?.inbound_type ?? "Unknown"}
+                detail={primaryInbound?.tag ?? "No inbound tag"}
+              />
+              <SnapshotChip
+                icon={<Globe size={13} />}
+                label="DNS"
+                value={dnsServer?.tag ?? "Unset"}
+                detail={dnsServer?.server ?? "No DNS server configured"}
+              />
+              <SnapshotChip
+                icon={<Layers3 size={13} />}
+                label="Nodes / Groups"
+                value={`${proxyNodes.length} / ${groups.length}`}
+                detail="Manage membership in the Nodes page"
+              />
+              <SnapshotChip
+                icon={<Route size={13} />}
+                label="Route Rules"
+                value={String(overview.route_rules_count)}
+                detail={`${rulesWithOutbound} target outbound`}
+              />
+              <SnapshotChip
+                icon={<FileJson size={13} />}
+                label="Rule Sets"
+                value={String(overview.rule_sets.length)}
+                detail={overview.rule_sets[0]?.tag ?? "No remote set"}
               />
             </div>
           </div>
-          <div className="surface-block rounded-2xl px-4 py-3 xl:min-w-[20rem]">
+
+          <div className="surface-block rounded-2xl px-4 py-3">
             <div className="flex items-center gap-2 text-xs text-content-secondary">
               <FileJson size={14} className="shrink-0" />
               <span className="section-label !tracking-[0.14em]">Active file</span>
             </div>
-            <span className="mt-1 block max-w-[34rem] truncate text-sm font-medium text-content">{overview.file_path}</span>
+            <p className="mt-1 truncate text-sm font-semibold text-content">{activeFileName}</p>
+            <p className="mt-1 break-all text-xs leading-5 text-content-secondary">{overview.file_path}</p>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* File path */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <StatCard
-          icon={<Server size={16} />}
-          label="Outbounds"
-          value={String(overview.outbounds.length)}
-          meta={`${proxyNodes.length} nodes / ${groups.length} groups`}
-          color="text-blue-500 dark:text-blue-400"
-        />
-        <StatCard
-          icon={<Globe size={16} />}
-          label="DNS Servers"
-          value={String(overview.dns_servers.length)}
-          meta={overview.dns_servers[0]?.server ?? "No DNS server"}
-          color="text-green-500 dark:text-green-400"
-        />
-        <StatCard
-          icon={<Router size={16} />}
-          label="Route Rules"
-          value={String(overview.route_rules_count)}
-          meta={`${rulesWithOutbound} rules target outbound`}
-          color="text-purple-500 dark:text-purple-400"
-        />
-        <StatCard
-          icon={<Database size={16} />}
-          label="Rule Sets"
-          value={String(overview.rule_sets.length)}
-          meta={overview.rule_sets[0]?.tag ?? "No remote set"}
-          color="text-orange-500 dark:text-orange-400"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Section
-          sectionKey="inbounds"
-          title="Inbounds"
-          count={overview.inbounds.length}
-          icon={<ArrowRightLeft size={15} />}
-          open={openSections.inbounds}
-          onToggle={toggleSection}
-        >
-          {overview.inbounds.map((inbound, idx) => (
-            <div key={idx} className="subtle-row flex items-center justify-between rounded-2xl p-3">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
-                  {inbound.inbound_type.toUpperCase()}
-                </span>
-                <span className="text-sm text-content">{inbound.tag}</span>
-              </div>
-              <span className="text-xs text-content-secondary">{inbound.details}</span>
-            </div>
-          ))}
-        </Section>
-
-        {groups.length > 0 && (
-          <Section
-            sectionKey="outboundGroups"
-            title="Outbound Groups"
-            count={groups.length}
-            icon={<Shield size={15} />}
-            open={openSections.outboundGroups}
-            onToggle={toggleSection}
-          >
-            {groups.map((group, idx) => {
-              const isSelected = selectedOutboundTag === group.tag;
+      <section className="panel-card rounded-[22px] p-4">
+        <div className="flex flex-col gap-3 border-b border-border/60 pb-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-content">Overview workspace</h3>
+            <p className="mt-1 text-[11px] text-content-muted">
+              Switch between node, DNS, rule, and rule-set details without leaving Overview.
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:w-auto lg:min-w-[30rem] lg:grid-cols-4">
+            {sectionTabs.map((tab) => {
+              const active = activeSection === tab.id;
               return (
-              <button
-                type="button"
-                key={idx}
-                onClick={() => onSelectOutbound(group.tag)}
-                className={`w-full space-y-2 rounded-2xl p-3 text-left transition-all ${
-                  isSelected
-                    ? "bg-primary-600/10 border border-primary-500/30"
-                    : "subtle-row"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {isSelected ? (
-                      <CheckCircle2 size={14} className="text-primary-500" />
-                    ) : (
-                      <MousePointerClick size={14} className="text-content-muted" />
-                    )}
-                    <span className="text-[10px] bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 px-1.5 py-0.5 rounded font-medium">
-                      {group.outbound_type.toUpperCase()}
-                    </span>
-                    <span className="text-sm text-content font-medium">{group.tag}</span>
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveSection(tab.id)}
+                  className={`overview-subtab ${active ? "active" : ""}`}
+                  aria-pressed={active}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {tab.icon}
+                    <span>{tab.label}</span>
+                  </span>
+                  <span className="rounded-full bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="pt-4">
+          {activeSection === "nodes" && (
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              <section className="surface-block rounded-[20px] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-content">Groups</h4>
+                    <p className="mt-1 text-[11px] text-content-muted">
+                      Selector and urltest groups extracted from the active profile.
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {isSelected && <span className="status-chip status-chip-primary">Active</span>}
-                    <span className="text-xs text-content-secondary">{group.details}</span>
-                  </div>
+                  <span className="status-chip">{groups.length}</span>
                 </div>
-                <div className="flex flex-wrap gap-1.5 pl-1">
-                  {group.group_members.map((member, mIdx) => (
-                    <span key={mIdx} className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[11px] text-content-secondary">
-                      {member}
-                    </span>
+                <div className="space-y-2">
+                  {groups.map((group) => (
+                    <div key={group.tag} className="subtle-row rounded-2xl px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
+                          {group.outbound_type}
+                        </span>
+                        <p className="text-sm font-medium text-content">{group.tag}</p>
+                        {selectedOutboundTag === group.tag && (
+                          <span className="status-chip status-chip-primary">Active</span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-content-secondary">
+                        <span className="rounded-full bg-surface-elevated px-2 py-1">
+                          members: {group.group_members.length}
+                        </span>
+                        {group.server && (
+                          <span className="rounded-full bg-surface-elevated px-2 py-1">
+                            server: {group.server}
+                          </span>
+                        )}
+                        {group.details && (
+                          <span className="rounded-full bg-surface-elevated px-2 py-1">
+                            {group.details}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {group.group_members.length > 0 ? (
+                          group.group_members.map((member) => (
+                            <span
+                              key={`${group.tag}-${member}`}
+                              className="rounded-xl bg-surface-elevated px-2 py-1 text-[11px] text-content-secondary"
+                            >
+                              {member}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-content-muted">No members listed</span>
+                        )}
+                      </div>
+                    </div>
                   ))}
                 </div>
-                <div className="flex items-center justify-between text-[11px] text-content-muted">
-                  <span>{group.group_members.length} candidates</span>
-                  <span>Click to route traffic through this group</span>
-                </div>
-              </button>
-            )})}
-          </Section>
-        )}
+              </section>
 
-        <Section
-          sectionKey="proxyNodes"
-          title="Proxy Nodes"
-          count={proxyNodes.length}
-          icon={<Server size={15} />}
-          open={openSections.proxyNodes}
-          onToggle={toggleSection}
-        >
-          {proxyNodes.map((node, idx) => {
-            const isSelected = selectedOutboundTag === node.tag;
-            return (
-            <button
-              type="button"
-              key={idx}
-              onClick={() => onSelectOutbound(node.tag)}
-              className={`flex w-full items-center justify-between rounded-2xl p-3 text-left transition-all ${
-                isSelected
-                  ? "bg-primary-600/10 border border-primary-500/30"
-                  : "subtle-row"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {isSelected ? (
-                  <CheckCircle2 size={14} className="text-primary-500" />
-                ) : (
-                  <MousePointerClick size={14} className="text-content-muted" />
-                )}
-                <span className="text-[10px] bg-blue-500/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-medium">
-                  {node.outbound_type.toUpperCase()}
-                </span>
-                <span className="text-sm text-content">{node.tag}</span>
-              </div>
-              <div className="text-right">
-                {isSelected && <p className="mb-1 text-[11px] font-medium text-primary-500">Current route target</p>}
-                <p className="text-xs text-content-secondary">
-                  {node.server}{node.port > 0 && `:${node.port}`}
-                </p>
-                <p className="text-[11px] text-content-muted">{node.details}</p>
-              </div>
-            </button>
-          )})}
-        </Section>
-
-        <Section
-          sectionKey="dnsServers"
-          title="DNS Servers"
-          count={overview.dns_servers.length}
-          icon={<Globe size={15} />}
-          open={openSections.dnsServers}
-          onToggle={toggleSection}
-        >
-          <div className="grid grid-cols-1 gap-1.5">
-            {overview.dns_servers.map((dns, idx) => (
-              <div key={idx} className="subtle-row flex items-center justify-between rounded-2xl p-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded font-medium">
-                    {dns.dns_type.toUpperCase()}
-                  </span>
-                  <span className="text-sm text-content">{dns.tag}</span>
-                </div>
-                <span className="text-xs text-content-secondary">{dns.server}</span>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        {overview.route_rules.length > 0 && (
-          <Section
-            sectionKey="routeRules"
-            title="Route Rules"
-            count={overview.route_rules.length}
-            icon={<Router size={15} />}
-            open={openSections.routeRules}
-            onToggle={toggleSection}
-          >
-            <div className="space-y-1.5">
-              {overview.route_rules.map((rule, idx) => (
-                <div key={idx} className="subtle-row flex items-start justify-between gap-3 rounded-2xl p-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] bg-purple-500/20 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded font-medium">
-                        RULE
-                      </span>
-                      {rule.action && (
-                        <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
-                          {rule.action}
-                        </span>
-                      )}
-                      {rule.outbound && (
-                        <span className="text-[10px] bg-surface-elevated text-content-secondary px-1.5 py-0.5 rounded">
-                          {rule.outbound}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 truncate text-sm text-content">{rule.summary}</p>
+              <section className="surface-block rounded-[20px] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-content">Nodes</h4>
+                    <p className="mt-1 text-[11px] text-content-muted">
+                      Direct outbound nodes available for selection.
+                    </p>
                   </div>
+                  <span className="status-chip">{proxyNodes.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {proxyNodes.map((node) => {
+                    const groupsForNode = groups.filter((group) => group.group_members.includes(node.tag));
+                    const isSelected = selectedOutboundTag === node.tag;
+
+                    return (
+                      <div
+                        key={node.tag}
+                        className={`subtle-row rounded-2xl px-3 py-2.5 ${
+                          isSelected ? "border-primary-500/30 bg-primary-600/10" : ""
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                                {node.outbound_type}
+                              </span>
+                              <p className="truncate text-sm font-medium text-content">{node.tag}</p>
+                              {isSelected && <span className="status-chip status-chip-primary">Active</span>}
+                            </div>
+                            <p className="mt-1 truncate text-xs text-content-secondary">
+                              {node.server}
+                              {node.port > 0 ? `:${node.port}` : ""}
+                            </p>
+                          </div>
+                          <ChevronRight size={14} className="mt-1 shrink-0 text-content-muted" />
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {groupsForNode.length > 0 ? (
+                            groupsForNode.map((group) => (
+                              <span
+                                key={`${node.tag}-${group.tag}`}
+                                className="rounded-xl bg-surface-elevated px-2 py-1 text-[11px] text-content-secondary"
+                              >
+                                {group.tag}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-content-muted">Standalone node</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+          )}
+
+          {activeSection === "dns" && (
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
+              <section className="surface-block rounded-[20px] p-4">
+                <h4 className="text-sm font-semibold text-content">DNS Summary</h4>
+                <p className="mt-1 text-[11px] text-content-muted">
+                  Top-level DNS target and server list from the current profile.
+                </p>
+                <div className="mt-3 space-y-2">
+                  <CompactRow label="Final" value={dnsServer?.tag ?? "Unset"} detail={dnsServer?.server ?? "No server configured"} />
+                  <CompactRow
+                    label="Servers"
+                    value={`${overview.dns_servers.length}`}
+                    detail={
+                      overview.dns_servers.length > 0
+                        ? `${overview.dns_servers[0]?.dns_type ?? "dns"} - first entry shown`
+                        : "No DNS servers configured"
+                    }
+                  />
+                </div>
+              </section>
+
+              <section className="surface-block rounded-[20px] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-content">DNS Servers</h4>
+                    <p className="mt-1 text-[11px] text-content-muted">
+                      All configured DNS servers in the active profile.
+                    </p>
+                  </div>
+                  <span className="status-chip">{overview.dns_servers.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {overview.dns_servers.map((server) => (
+                    <div key={server.tag} className="subtle-row rounded-2xl px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+                          {server.dns_type}
+                        </span>
+                        <p className="text-sm font-medium text-content">{server.tag}</p>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-content-secondary">{server.server}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
+
+          {activeSection === "rules" && (
+            <section>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-content">Editable rules</h4>
+                  <p className="mt-1 text-[11px] text-content-muted">
+                    {overview.route_rules_count} total rules, all available here for editing.
+                  </p>
+                </div>
+                <span className="status-chip">{rulesWithOutbound} target outbound</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                {overview.route_rules.map((rule, idx) => (
                   <button
+                    key={`${rule.rule_type}-${idx}`}
                     type="button"
                     onClick={() => onEditRouteRule(idx, rule)}
-                    className="shrink-0 rounded p-1.5 text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content"
-                    title="Edit rule"
+                    className="subtle-row flex items-start justify-between gap-3 rounded-[20px] p-3 text-left transition-all hover:border-border"
                   >
-                    <Pencil size={14} />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-600 dark:text-purple-400">
+                          RULE
+                        </span>
+                        {rule.rule_type && (
+                          <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                            {rule.rule_type}
+                          </span>
+                        )}
+                        {rule.action && (
+                          <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                            {rule.action}
+                          </span>
+                        )}
+                        {rule.outbound && (
+                          <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                            {rule.outbound}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 truncate text-sm font-medium text-content">{rule.summary}</p>
+                      <p className="mt-1 truncate text-[11px] text-content-secondary">
+                        Click to open the full JSON editor
+                      </p>
+                    </div>
+                    <Pencil size={14} className="shrink-0 text-content-muted" />
                   </button>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
+                ))}
+              </div>
+            </section>
+          )}
 
-        {overview.rule_sets.length > 0 && (
-          <Section
-            sectionKey="ruleSets"
-            title="Rule Sets"
-            count={overview.rule_sets.length}
-            icon={<Database size={15} />}
-            open={openSections.ruleSets}
-            onToggle={toggleSection}
-          >
-            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {overview.rule_sets.map((rs, idx) => (
-                <div key={idx} className="subtle-row flex items-center gap-2 rounded-2xl p-3">
-                  <span className="text-[10px] bg-orange-500/20 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded font-medium">
-                    {rs.rule_type.toUpperCase()}
-                  </span>
-                  <span className="text-xs text-content truncate">{rs.tag}</span>
+          {activeSection === "ruleSets" && (
+            <section>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-content">Rule Sets</h4>
+                  <p className="mt-1 text-[11px] text-content-muted">
+                    Remote and local rule-set definitions loaded by the profile.
+                  </p>
                 </div>
-              ))}
-            </div>
-          </Section>
-        )}
-      </div>
+                <span className="status-chip">{overview.rule_sets.length}</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                {overview.rule_sets.map((ruleSet) => (
+                  <div key={ruleSet.tag} className="subtle-row rounded-[20px] p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] font-medium text-orange-600 dark:text-orange-400">
+                        {ruleSet.rule_type}
+                      </span>
+                      <p className="text-sm font-medium text-content">{ruleSet.tag}</p>
+                      <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                        {ruleSet.format}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 break-all text-xs text-content-secondary">{ruleSet.url}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
 
-function SummaryPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="surface-block flex items-center gap-2 rounded-full px-3 py-2">
-      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-elevated text-content-secondary">
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
-        <p className="truncate text-xs font-medium text-content">{value}</p>
-      </div>
-    </div>
-  );
-}
-
-function StatCard({
+function SnapshotChip({
   icon,
   label,
   value,
-  meta,
-  color,
+  detail,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
-  meta: string;
-  color: string;
+  detail: string;
 }) {
   return (
-    <div className="panel-card rounded-[22px] p-4">
-      <div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
-      <p className="text-2xl font-semibold tracking-tight text-content">{value}</p>
-      <p className="mt-1 text-[11px] uppercase tracking-[0.15em] text-content-secondary">{label}</p>
-      <p className="mt-2 truncate text-xs text-content-muted">{meta}</p>
+    <div className="surface-block rounded-[18px] px-3.5 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-elevated text-content-secondary">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
+          <p className="truncate text-sm font-medium text-content">{value}</p>
+        </div>
+      </div>
+      <p className="mt-2 truncate text-[11px] text-content-secondary">{detail}</p>
     </div>
   );
 }
 
-function Section({
-  sectionKey,
-  title,
-  count,
-  icon,
-  children,
-  open,
-  onToggle,
+function CompactRow({
+  label,
+  value,
+  detail,
 }: {
-  sectionKey: string;
-  title: string;
-  count: number;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-  open: boolean;
-  onToggle: (key: string) => void;
+  label: string;
+  value: string;
+  detail: string;
 }) {
   return (
-    <div className="panel-card rounded-[24px] p-4">
-      <button
-        type="button"
-        onClick={() => onToggle(sectionKey)}
-        className="mb-3 flex w-full items-center gap-2 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-surface-elevated/60"
-      >
-        <span className="text-content-secondary">
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </span>
-        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-surface-elevated text-content-secondary">{icon}</span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-medium text-content">{title}</h3>
-          <p className="text-[11px] text-content-muted">Expand to inspect current configuration</p>
-        </div>
-        <span className="status-chip">{count}</span>
-      </button>
-      {open && <div className="space-y-1.5">{children}</div>}
+    <div className="surface-block rounded-[18px] px-3.5 py-2.5">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
+      <p className="mt-1 truncate text-sm font-medium text-content">{value}</p>
+      <p className="mt-1 truncate text-[11px] text-content-secondary">{detail}</p>
     </div>
   );
 }

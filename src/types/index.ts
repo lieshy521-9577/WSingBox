@@ -58,6 +58,7 @@ export interface RouteRuleInfo {
 }
 
 export interface AppSettings {
+  autostart_enabled: boolean;
   tun_enabled: boolean;
   mixed_listen: string;
   mixed_port: number;

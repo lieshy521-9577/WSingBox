@@ -1,4 +1,4 @@
-import { Power, AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2, Power } from "lucide-react";
 import { ProxyNode } from "../types";
 import { Profile } from "../hooks/useSingbox";
 
@@ -78,30 +78,30 @@ function ProxyControl({
         : "No route target selected";
 
   return (
-    <div className="border-b border-border/80 bg-surface/85 px-5 py-4">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex items-center gap-4">
+    <div className="border-b border-border/80 bg-surface/85 px-[clamp(0.875rem,1.6vw,1.25rem)] py-[clamp(0.75rem,1.4vw,1rem)]">
+      <div className="flex flex-col gap-[clamp(0.75rem,1.4vw,1rem)] xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex items-center gap-[clamp(0.75rem,1.4vw,1rem)]">
           <button
             onClick={onToggle}
             disabled={loading || (!canStart && !isRunning)}
-            className={`flex h-14 w-14 items-center justify-center rounded-[20px] border transition-all ${
+            className={`flex h-[clamp(3rem,4.5vw,3.5rem)] w-[clamp(3rem,4.5vw,3.5rem)] items-center justify-center rounded-[20px] border transition-all ${
               isRunning
                 ? "border-emerald-400/30 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
                 : "border-border bg-surface-elevated text-content-muted hover:bg-surface-subtle"
-            } ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
+            } ${loading ? "cursor-not-allowed opacity-80" : ""}`}
           >
-            <Power size={22} />
+            {loading ? <Loader2 size={22} className="animate-spin" /> : <Power size={22} />}
           </button>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <p className="text-xl font-semibold text-content">
+              <p className="text-[clamp(1.05rem,2vw,1.25rem)] font-semibold text-content">
                 {isRunning ? "Sing-box Running" : "Sing-box Stopped"}
               </p>
               <span className={`status-pill ${isRunning ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-slate-400/10 text-slate-600 dark:text-slate-300"}`}>
                 {statusLabel}
               </span>
             </div>
-            <p className="max-w-3xl text-sm text-content-secondary">
+            <p className="max-w-3xl text-[clamp(0.8rem,1.2vw,0.875rem)] text-content-secondary">
               {selectedNode
                 ? `Active: ${selectedNode.name} (${selectedNode.server}:${selectedNode.port})`
                 : selectedProfile

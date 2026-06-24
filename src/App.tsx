@@ -133,12 +133,12 @@ function App() {
   }, [configOverview, editingRouteRule, loadOverview]);
 
   return (
-    <div className="h-screen overflow-hidden bg-surface-base p-2">
-      <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[28px]">
+    <div className="h-screen overflow-hidden bg-surface-base p-[clamp(0.25rem,0.55vw,0.375rem)]">
+      <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[22px]">
         {/* Custom title bar */}
         <TitleBar theme={theme} onToggleTheme={toggleTheme} onCloseToTray={() => void hideToTray()} />
 
-        <div className="flex flex-1 overflow-hidden p-3">
+        <div className="flex flex-1 overflow-hidden p-[clamp(0.375rem,0.8vw,0.5rem)]">
         {/* Sidebar navigation */}
         <Sidebar
           currentPage={currentPage}
@@ -153,7 +153,7 @@ function App() {
         />
 
         {/* Main content */}
-        <main className="workspace-shell ml-3 flex flex-1 flex-col overflow-hidden rounded-[24px] border border-border/70">
+        <main className="workspace-shell ml-[clamp(0.375rem,0.8vw,0.5rem)] flex flex-1 flex-col overflow-hidden rounded-[22px] border border-border/70">
           {/* Proxy control bar */}
           <ProxyControl
             isRunning={singbox.isRunning}
@@ -170,7 +170,7 @@ function App() {
           />
 
           {/* Page content */}
-          <div className="app-scroll flex-1 overflow-auto px-5 pb-5 pt-4">
+          <div className="app-scroll flex-1 overflow-auto px-[clamp(0.75rem,1.4vw,1rem)] pb-[clamp(0.75rem,1.4vw,1rem)] pt-[clamp(0.625rem,1.2vw,0.75rem)]">
             {currentPage === "overview" && (
               configOverview ? (
                 <div className="page-entrance">
@@ -178,21 +178,20 @@ function App() {
                     overview={configOverview}
                     onEditRouteRule={handleEditRouteRule}
                     selectedOutboundTag={singbox.selectedOutboundTag}
-                    onSelectOutbound={singbox.setSelectedOutboundTag}
                   />
                 </div>
               ) : (
                 <div className="page-entrance flex h-full items-center justify-center">
-                  <div className="panel-card w-full max-w-xl rounded-[28px] p-8 text-center">
-                    <p className="section-label mb-3">Ready to configure</p>
-                    <h2 className="text-2xl font-semibold tracking-tight text-content">No configuration loaded</h2>
-                    <p className="mx-auto mt-3 max-w-md text-sm text-content-secondary">
+                  <div className="panel-card w-full max-w-xl rounded-[24px] p-6 text-center">
+                    <p className="section-label mb-2.5">Ready to configure</p>
+                    <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">No configuration loaded</h2>
+                    <p className="mx-auto mt-2.5 max-w-md text-[13px] leading-5 text-content-secondary">
                       Import a sing-box profile to inspect routes, manage nodes, and control proxy behavior from one workspace.
                     </p>
-                  <button
-                    onClick={handleImportConfig}
-                      className="mt-6 rounded-2xl bg-primary-600 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-primary-700"
-                  >
+                    <button
+                      onClick={handleImportConfig}
+                      className="mt-5 rounded-2xl bg-primary-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                    >
                     Import sing-box Config
                   </button>
                   </div>

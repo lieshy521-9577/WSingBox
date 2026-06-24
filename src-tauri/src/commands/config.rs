@@ -1,8 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use winreg::enums::HKEY_CURRENT_USER;
+#[cfg(windows)]
+use winreg::RegKey;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Represents a proxy node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +104,7 @@ pub struct RouteRuleInfo {
 /// Persistent client settings applied to imported/generated configs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    pub autostart_enabled: bool,
     pub tun_enabled: bool,
     pub mixed_listen: String,
     pub mixed_port: u16,
@@ -138,6 +149,7 @@ fn default_dns_servers() -> Vec<serde_json::Value> {
 
 fn default_app_settings() -> AppSettings {
     AppSettings {
+        autostart_enabled: false,
         tun_enabled: false,
         mixed_listen: "127.0.0.1".to_string(),
         mixed_port: 7890,
@@ -201,7 +213,8 @@ pub async fn get_config_overview() -> Result<Option<ConfigOverview>, String> {
 /// Get the current client settings or infer them from config/defaults
 #[tauri::command]
 pub async fn get_app_settings() -> Result<AppSettings, String> {
-    if let Ok(settings) = load_app_settings() {
+    if let Ok(mut settings) = load_app_settings() {
+        settings.autostart_enabled = is_autostart_enabled().unwrap_or(settings.autostart_enabled);
         return Ok(settings);
     }
 
@@ -211,16 +224,36 @@ pub async fn get_app_settings() -> Result<AppSettings, String> {
             .map_err(|e| format!("Failed to read config: {}", e))?;
         let config: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse config: {}", e))?;
-        return Ok(infer_settings_from_config(&config));
+        let mut settings = infer_settings_from_config(&config);
+        settings.autostart_enabled = is_autostart_enabled().unwrap_or(false);
+        return Ok(settings);
     }
 
-    Ok(default_app_settings())
+    let mut settings = default_app_settings();
+    settings.autostart_enabled = is_autostart_enabled().unwrap_or(false);
+    Ok(settings)
+}
+
+#[tauri::command]
+pub async fn get_singbox_core_version() -> Result<String, String> {
+    let binary = super::singbox::find_singbox_binary_for_version()?;
+    let output = hidden_command(&binary)
+        .arg("version")
+        .output()
+        .map_err(|e| format!("Failed to query sing-box version: {}", e))?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Ok(if stderr.is_empty() { "Unknown".to_string() } else { stderr });
+    }
+    Ok(text.lines().next().unwrap_or("Unknown").to_string())
 }
 
 /// Save client settings and re-apply them to the current config if one exists
 #[tauri::command]
 pub async fn save_app_settings(settings: AppSettings) -> Result<AppSettings, String> {
     save_app_settings_file(&settings)?;
+    sync_autostart(settings.autostart_enabled)?;
 
     let config_path = get_config_dir().join("config.json");
     if config_path.exists() {
@@ -1515,6 +1548,60 @@ fn apply_app_settings_to_config(mut config: serde_json::Value, settings: &AppSet
     }
 
     config
+}
+
+fn sync_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (run_key, _) = hkcu
+            .create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .map_err(|e| format!("Failed to open startup registry key: {}", e))?;
+
+        let app_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to locate app executable: {}", e))?;
+        let command = format!("\"{}\"", app_path.display());
+
+        if enabled {
+            run_key
+                .set_value("SingBox Client", &command)
+                .map_err(|e| format!("Failed to enable autostart: {}", e))?;
+        } else {
+            let _ = run_key.delete_value("SingBox Client");
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
+}
+
+fn is_autostart_enabled() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let run_key = hkcu
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .map_err(|e| format!("Failed to read startup registry key: {}", e))?;
+
+        let value: Result<String, _> = run_key.get_value("SingBox Client");
+        Ok(value.is_ok())
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
+fn hidden_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 /// Sanitize config for sing-box 1.12.0 compatibility:

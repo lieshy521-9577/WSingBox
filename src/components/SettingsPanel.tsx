@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRightLeft, Database, Globe, Shield } from "lucide-react";
+import { ArrowRightLeft, Database, Globe, Loader2, Shield } from "lucide-react";
 import { AppSettings } from "../types";
 
 interface SettingsPanelProps {
@@ -10,6 +10,7 @@ interface SettingsPanelProps {
 type SettingsSection = "inbound" | "ruleSets" | "tun" | "dns";
 
 const defaultSettings: AppSettings = {
+  autostart_enabled: false,
   tun_enabled: false,
   mixed_listen: "127.0.0.1",
   mixed_port: 7890,
@@ -34,6 +35,7 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>("inbound");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autostartSaving, setAutostartSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,6 +96,26 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
     setSettings((prev) => ({ ...prev, [key]: value }));
   }
 
+  async function toggleAutostart(checked: boolean) {
+    if (autostartSaving) {
+      return;
+    }
+
+    const nextSettings = { ...settings, autostart_enabled: checked };
+    try {
+      setAutostartSaving(true);
+      setError(null);
+      setMessage(null);
+      await invoke("save_app_settings", { settings: nextSettings });
+      setSettings(nextSettings);
+      setMessage(checked ? "Autostart enabled." : "Autostart disabled.");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setAutostartSaving(false);
+    }
+  }
+
   async function handleSave() {
     try {
       setSaving(true);
@@ -116,6 +138,7 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
 
       const payload: AppSettings = {
         ...settings,
+        autostart_enabled: Boolean(settings.autostart_enabled),
         mixed_port: Number(settings.mixed_port),
         tun_mtu: Number(settings.tun_mtu),
         tun_address: tunAddress,
@@ -158,6 +181,13 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <SettingsMetric
+          icon={<ArrowRightLeft size={16} />}
+          label="Autostart"
+          value={settings.autostart_enabled ? "On" : "Off"}
+          meta="Windows startup"
+          color="text-violet-500 dark:text-violet-400"
+        />
         <SettingsMetric
           icon={<ArrowRightLeft size={16} />}
           label="Inbound"
@@ -229,6 +259,13 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
                   Controls the local mixed inbound used for system proxy and optional TUN inbound.
                 </p>
               </div>
+
+              <Toggle
+                label="Start on Windows login"
+                checked={settings.autostart_enabled}
+                loading={autostartSaving}
+                onChange={toggleAutostart}
+              />
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Field label="Mixed Listen Host">
@@ -405,14 +442,14 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
       <div className="panel-card flex items-center gap-3 rounded-[24px] p-4">
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || autostartSaving}
           className="btn-primary rounded-2xl px-4 py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>
         <button
           onClick={loadSettings}
-          disabled={saving}
+          disabled={saving || autostartSaving}
           className="btn-secondary rounded-2xl px-4 py-2.5 text-sm transition-colors disabled:opacity-50"
         >
           Reload
@@ -474,16 +511,33 @@ function Field({
 function Toggle({
   label,
   checked,
+  loading,
   onChange,
 }: {
   label: string;
   checked: boolean;
+  loading?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="surface-block flex items-center justify-between rounded-2xl px-3 py-2.5 text-sm text-content transition-transform duration-200 hover:-translate-y-[1px]">
-      <span>{label}</span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className="surface-block flex cursor-pointer items-center justify-between rounded-2xl px-3 py-2.5 text-sm text-content transition-transform duration-200 hover:-translate-y-[1px]">
+      <span className="pr-3">{label}</span>
+      <span className="relative inline-flex items-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="peer sr-only"
+          disabled={loading}
+        />
+        <span className="h-5 w-10 rounded-full border border-border/80 bg-surface-elevated transition-colors peer-checked:border-primary-500/30 peer-checked:bg-primary-500/20" />
+        <span className="pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5 peer-checked:bg-primary-500 dark:bg-slate-200" />
+        {loading && (
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <Loader2 size={12} className="animate-spin text-primary-600 dark:text-primary-300" />
+          </span>
+        )}
+      </span>
     </label>
   );
 }

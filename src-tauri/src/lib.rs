@@ -140,6 +140,7 @@ pub fn run() {
             config::clear_config,
             config::get_app_settings,
             config::save_app_settings,
+            config::get_singbox_core_version,
             config::get_rule_sets_json,
             config::save_rule_sets_json,
             config::get_route_rules_json,

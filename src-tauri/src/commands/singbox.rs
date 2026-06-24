@@ -376,6 +376,15 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
     Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
 }
 
+pub fn find_singbox_binary_for_version() -> Result<String, String> {
+    if let Ok(dev_path) = std::fs::canonicalize(r"C:\_dCode\SingBox\bin\sing-box.exe") {
+        if dev_path.exists() {
+            return Ok(dev_path.to_string_lossy().to_string());
+        }
+    }
+    Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
+}
+
 fn hidden_command(program: &str) -> Command {
     let mut command = Command::new(program);
     #[cfg(windows)]

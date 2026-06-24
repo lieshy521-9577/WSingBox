@@ -12,7 +12,8 @@ import {
   Pencil,
   Sparkles,
   Network,
-  Radar,
+  Zap,
+  Globe,
 } from "lucide-react";
 import { ProxyNode, PROTOCOL_LABELS, ProtocolType } from "../types";
 import { Profile } from "../hooks/useSingbox";
@@ -65,8 +66,6 @@ function NodeList({
   const topSelectorTag = profiles.find((p) => p.profile_type === "selector")?.tag ?? profiles[0]?.tag ?? null;
   const activeGroup = profiles.find((profile) => profile.tag === selectedOutboundTag) ?? null;
   const activeNode = nodes.find((node) => node.id === selectedOutboundTag) ?? null;
-  const testedCount = Object.keys(latencies).length;
-
   const resolveLatencyMode = (nodeType: string) => {
     if (latencyMode !== "auto") {
       return latencyMode;
@@ -171,12 +170,12 @@ function NodeList({
   return (
     <div className="space-y-5">
       <div className="panel-card rounded-[24px] p-5">
-        <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div className="space-y-4">
+        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <div className="space-y-3">
             <div>
               <p className="section-label mb-2">Nodes & Groups</p>
-              <h2 className="text-2xl font-semibold tracking-tight text-content">Outbound selection workspace</h2>
-              <p className="mt-2 max-w-2xl text-sm text-content-secondary">
+              <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">Outbound selection workspace</h2>
+              <p className="mt-2 max-w-2xl text-[13px] leading-5 text-content-secondary">
                 Review selector groups, choose direct nodes, and compare latency before switching the active route target.
               </p>
             </div>
@@ -198,21 +197,20 @@ function NodeList({
               />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
+          <div className="flex flex-wrap items-center gap-2 xl:self-end">
+            <ModeToggle
               value={latencyMode}
-              onChange={(e) => setLatencyMode(e.target.value as "auto" | "connect" | "http")}
-              className="input w-auto min-w-[10rem] py-2 text-sm"
-              title="Latency test mode"
-            >
-              <option value="auto">Auto</option>
-              <option value="connect">Connect</option>
-              <option value="http">HTTP</option>
-            </select>
+              onChange={setLatencyMode}
+              options={[
+                { value: "auto", label: "Auto", icon: <Zap size={13} /> },
+                { value: "connect", label: "Connect", icon: <Server size={13} /> },
+                { value: "http", label: "HTTP", icon: <Globe size={13} /> },
+              ]}
+            />
             <button
               onClick={testAllLatency}
               disabled={testing || nodes.length === 0}
-              className={`btn-secondary flex items-center gap-1.5 rounded-2xl px-4 py-2.5 text-sm transition-colors ${
+              className={`btn-secondary flex items-center gap-1.5 rounded-2xl px-4 py-2 text-sm transition-colors ${
                 testing ? "cursor-not-allowed opacity-70" : ""
               }`}
             >
@@ -221,7 +219,7 @@ function NodeList({
             </button>
             <button
               onClick={onAdd}
-              className="btn-primary flex items-center gap-1.5 rounded-2xl px-4 py-2.5 text-sm transition-colors"
+              className="btn-primary flex items-center gap-1.5 rounded-2xl px-4 py-2 text-sm transition-colors"
             >
               <Plus size={14} />
               Add Node
@@ -229,36 +227,6 @@ function NodeList({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <MetricCard
-            icon={<Layers3 size={16} />}
-            label="Groups"
-            value={String(profiles.length)}
-            meta={topSelectorTag ? `Primary: ${topSelectorTag}` : "No selector group"}
-            color="text-yellow-500 dark:text-yellow-400"
-          />
-          <MetricCard
-            icon={<Server size={16} />}
-            label="Nodes"
-            value={String(nodes.length)}
-            meta={activeNode ? `${activeNode.name} selected` : "No direct node selected"}
-            color="text-blue-500 dark:text-blue-400"
-          />
-          <MetricCard
-            icon={<Radar size={16} />}
-            label="Latency"
-            value={testing ? "..." : String(testedCount)}
-            meta={testing ? "Running test batch" : `${latencyMode.toUpperCase()} mode`}
-            color="text-emerald-500 dark:text-emerald-400"
-          />
-          <MetricCard
-            icon={<CheckCircle2 size={16} />}
-            label="Active"
-            value={activeGroup ? "Group" : activeNode ? "Node" : "None"}
-            meta={activeGroup?.tag ?? activeNode?.server ?? "Choose a route target"}
-            color="text-purple-500 dark:text-purple-400"
-          />
-        </div>
       </div>
 
       {profiles.length > 0 && (
@@ -500,6 +468,39 @@ function NodeList({
   );
 }
 
+function ModeToggle({
+  value,
+  onChange,
+  options,
+}: {
+  value: "auto" | "connect" | "http";
+  onChange: (value: "auto" | "connect" | "http") => void;
+  options: Array<{
+    value: "auto" | "connect" | "http";
+    label: string;
+    icon: React.ReactNode;
+  }>;
+}) {
+  return (
+    <div className="mode-toggle">
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`mode-toggle-button ${active ? "active" : ""}`}
+            aria-pressed={active}
+          >
+            <span>{option.icon}</span>
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 function SummaryPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="surface-block flex items-center gap-2 rounded-full px-3 py-2">
@@ -510,29 +511,6 @@ function SummaryPill({ icon, label, value }: { icon: React.ReactNode; label: str
         <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
         <p className="truncate text-xs font-medium text-content">{value}</p>
       </div>
-    </div>
-  );
-}
-
-function MetricCard({
-  icon,
-  label,
-  value,
-  meta,
-  color,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  meta: string;
-  color: string;
-}) {
-  return (
-    <div className="panel-card rounded-[22px] p-4">
-      <div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
-      <p className="text-2xl font-semibold tracking-tight text-content">{value}</p>
-      <p className="mt-1 text-[11px] uppercase tracking-[0.15em] text-content-secondary">{label}</p>
-      <p className="mt-2 truncate text-xs text-content-muted">{meta}</p>
     </div>
   );
 }

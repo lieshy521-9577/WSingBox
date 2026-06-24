@@ -35,8 +35,8 @@ function Sidebar({
   ];
 
   return (
-    <aside className="panel-card flex w-64 flex-col overflow-hidden rounded-[24px] bg-sidebar/90">
-      <div className="border-b border-border/80 px-4 py-4">
+    <aside className="panel-card flex w-[clamp(13.75rem,22vw,16rem)] min-h-0 flex-col overflow-hidden rounded-[24px] bg-sidebar/90">
+      <div className="border-b border-border/80 px-[clamp(0.75rem,1.25vw,1rem)] py-[clamp(0.75rem,1.25vw,1rem)]">
         <p className="section-label mb-2">Session</p>
         <div className="surface-block rounded-2xl px-3 py-3">
           <div className="flex items-center justify-between">
@@ -62,7 +62,7 @@ function Sidebar({
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-3 py-4">
+      <nav className="space-y-1 px-[clamp(0.625rem,1vw,0.75rem)] py-[clamp(0.75rem,1.25vw,1rem)]">
         <p className="section-label px-2 pb-2">Workspace</p>
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -71,13 +71,13 @@ function Sidebar({
             <button
               key={item.id}
               onClick={() => onPageChange(item.id)}
-              className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm transition-all ${
+              className={`flex w-full items-center gap-[clamp(0.5rem,0.9vw,0.75rem)] rounded-2xl px-[clamp(0.625rem,1vw,0.75rem)] py-[clamp(0.625rem,1vw,0.75rem)] text-sm transition-all ${
                 isActive
                   ? "bg-primary-600/14 text-primary-700 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.14)] dark:text-primary-300"
                   : "text-content-secondary hover:bg-surface-elevated hover:text-content"
               }`}
             >
-              <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${
+              <span className={`flex h-[clamp(1.9rem,3vw,2rem)] w-[clamp(1.9rem,3vw,2rem)] items-center justify-center rounded-xl ${
                 isActive ? "bg-primary-600/15" : "bg-white/70 dark:bg-slate-900/30"
               }`}>
                 <Icon size={16} />
@@ -89,7 +89,8 @@ function Sidebar({
       </nav>
 
       {/* Bottom actions */}
-      <div className="border-t border-border/80 px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-hidden border-t border-border/80 px-[clamp(0.625rem,1vw,0.75rem)] py-[clamp(0.625rem,1vw,0.75rem)]">
+        <div className="flex h-full min-h-0 flex-col">
         <div className="surface-block mb-3 rounded-2xl p-2">
           <button
             onClick={onImportConfig}
@@ -100,14 +101,14 @@ function Sidebar({
           </button>
         </div>
         {configProfiles.length > 0 && (
-          <div className="mb-3 space-y-1">
+          <div className="mb-3 min-h-0 flex-1 space-y-1 overflow-hidden">
             <div className="flex items-center justify-between px-2 pb-1">
               <div className="text-[11px] uppercase tracking-[0.16em] text-content-muted">
                 Saved Profiles
               </div>
               <span className="status-chip">{configProfiles.length}</span>
             </div>
-            <div className="max-h-52 space-y-1 overflow-auto pr-1">
+            <div className="app-scroll h-full min-h-0 space-y-1 overflow-auto pr-1">
               {configProfiles.map((profile) => {
                 const isActive = activeConfigProfileId === profile.id;
                 return (
@@ -153,11 +154,13 @@ function Sidebar({
         )}
         <button
           onClick={onClearConfig}
-          className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm text-content-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
+          className="mt-auto flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-sm text-content-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
+          title="Clear all saved profiles"
         >
-          <Trash2 size={16} />
-          Clear All Profiles
+          <Trash2 size={15} />
+          <span className="truncate">Clear All Profiles</span>
         </button>
+        </div>
       </div>
     </aside>
   );
