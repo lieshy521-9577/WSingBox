@@ -8,6 +8,7 @@ interface SidebarProps {
   onPageChange: (page: Page) => void;
   isRunning: boolean;
   onImportConfig: () => void;
+  onImportConfigUrl: () => void;
   onClearConfig: () => void;
   configProfiles: ConfigProfile[];
   activeConfigProfileId: string | null;
@@ -20,6 +21,7 @@ function Sidebar({
   onPageChange,
   isRunning,
   onImportConfig,
+  onImportConfigUrl,
   onClearConfig,
   configProfiles,
   activeConfigProfileId,
@@ -98,6 +100,12 @@ function Sidebar({
           >
             <FileUp size={16} />
             Import Profile
+          </button>
+          <button
+            onClick={onImportConfigUrl}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-border/70 bg-white/55 px-3 py-2 text-xs font-medium text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content dark:bg-slate-900/25"
+          >
+            Import from URL
           </button>
         </div>
         {configProfiles.length > 0 && (

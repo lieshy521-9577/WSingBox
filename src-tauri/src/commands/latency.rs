@@ -33,7 +33,8 @@ pub async fn test_node_latency(
     }
 
     let mixed_port = reserve_local_port()?;
-    let config_path = write_temp_latency_config(&node_id, &node_type, &server, port, &settings, mixed_port)?;
+    let config_path =
+        write_temp_latency_config(&node_id, &node_type, &server, port, &settings, mixed_port)?;
     let singbox_path = find_singbox_binary()?;
 
     let mut child = start_temp_singbox(&singbox_path, &config_path)?;
@@ -57,7 +58,14 @@ pub async fn test_node_latency(
 
 #[tauri::command]
 pub async fn test_all_latency(
-    nodes: Vec<(String, String, String, u16, serde_json::Value, Option<String>)>,
+    nodes: Vec<(
+        String,
+        String,
+        String,
+        u16,
+        serde_json::Value,
+        Option<String>,
+    )>,
 ) -> Result<Vec<LatencyResult>, String> {
     let mut results = Vec::new();
 
@@ -153,13 +161,13 @@ fn write_temp_latency_config(
     let path = dir.join(format!("{}.json", node_id));
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize latency config: {}", e))?;
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to write latency config: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Failed to write latency config: {}", e))?;
     Ok(path)
 }
 
 fn start_temp_singbox(singbox_path: &str, config_path: &PathBuf) -> Result<Child, String> {
-    hidden_command(singbox_path)
+    let mut command = hidden_command(singbox_path);
+    super::singbox::apply_deprecated_envs(&mut command)
         .args(["run", "-c", &config_path.to_string_lossy()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -238,8 +246,21 @@ fn find_singbox_binary() -> Result<String, String> {
             let candidates = vec![
                 exe_dir.join("sing-box.exe"),
                 exe_dir.join("bin").join("sing-box.exe"),
-                exe_dir.join("..").join("..").join("..").join("bin").join("sing-box.exe"),
-                exe_dir.join("..").join("..").join("..").join("..").join("bin").join("sing-box.exe"),
+                exe_dir.join("resources").join("sing-box.exe"),
+                exe_dir.join("resources").join("bin").join("sing-box.exe"),
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("bin")
+                    .join("sing-box.exe"),
+                exe_dir
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("..")
+                    .join("bin")
+                    .join("sing-box.exe"),
             ];
 
             for candidate in candidates {

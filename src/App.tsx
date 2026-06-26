@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import TitleBar from "./components/TitleBar";
 import Sidebar from "./components/Sidebar";
 import NodeList from "./components/NodeList";
@@ -11,11 +13,15 @@ import ConfigOverviewPanel from "./components/ConfigOverviewPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import RouteRuleModal from "./components/RouteRuleModal";
 import AboutPanel from "./components/AboutPanel";
+import StartupTipsModal from "./components/StartupTipsModal";
 import { useSingbox } from "./hooks/useSingbox";
 import { useTheme } from "./hooks/useTheme";
 import { ConfigOverview, ProxyNode, RouteRuleInfo } from "./types";
 
 type Page = "overview" | "nodes" | "logs" | "settings" | "about";
+
+const STARTUP_TIPS_DISMISSED_KEY = "singbox-startup-tips-dismissed-at";
+const STARTUP_TIPS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>("overview");
@@ -23,6 +29,10 @@ function App() {
   const [configOverview, setConfigOverview] = useState<ConfigOverview | null>(null);
   const [editingRouteRule, setEditingRouteRule] = useState<{ index: number; rule: RouteRuleInfo } | null>(null);
   const [editingNode, setEditingNode] = useState<ProxyNode | null>(null);
+  const [appVersion, setAppVersion] = useState("0.1.0");
+  const [coreVersion, setCoreVersion] = useState("Detecting...");
+  const [showStartupTips, setShowStartupTips] = useState(false);
+  const [suppressStartupTips, setSuppressStartupTips] = useState(true);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
 
@@ -49,6 +59,27 @@ function App() {
     };
   }, [hideToTray]);
 
+  useEffect(() => {
+    const dismissedAt = Number(localStorage.getItem(STARTUP_TIPS_DISMISSED_KEY) || "0");
+    const withinQuietWindow = Number.isFinite(dismissedAt) && Date.now() - dismissedAt < STARTUP_TIPS_WINDOW_MS;
+
+    if (!withinQuietWindow) {
+      setShowStartupTips(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    invoke<string>("get_singbox_core_version")
+      .then((value) => setCoreVersion(value || "Unknown"))
+      .catch(() => setCoreVersion("Unknown"));
+  }, []);
+
+  useEffect(() => {
+    getVersion()
+      .then((value) => setAppVersion(value))
+      .catch(() => setAppVersion("0.1.0"));
+  }, []);
+
   const loadOverview = useCallback(async () => {
     try {
       const overview = await invoke<ConfigOverview | null>("get_config_overview");
@@ -69,10 +100,12 @@ function App() {
 
   const handleImportConfig = useCallback(async () => {
     try {
-      const filePath = window.prompt(
-        "Enter the path to your sing-box config JSON file to import as a saved profile:",
-        "C:\\_dProj\\Proxy\\client.json"
-      );
+      const selected = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "sing-box profile", extensions: ["json"] }],
+      });
+      const filePath = Array.isArray(selected) ? selected[0] : selected;
       if (!filePath) return;
 
       const result = await invoke<{
@@ -82,6 +115,27 @@ function App() {
         active_node: string;
         active_outbound: string;
       }>("import_config_file", { filePath });
+
+      setConfigOverview(result.overview);
+      await singbox.onConfigImported(result.active_outbound || result.active_node);
+      setCurrentPage("overview");
+    } catch (err) {
+      singbox.setError(String(err));
+    }
+  }, [singbox]);
+
+  const handleImportConfigUrl = useCallback(async () => {
+    try {
+      const url = window.prompt("Enter a sing-box profile URL:");
+      if (!url?.trim()) return;
+
+      const result = await invoke<{
+        overview: ConfigOverview;
+        nodes: unknown[];
+        profiles: unknown[];
+        active_node: string;
+        active_outbound: string;
+      }>("import_config_url", { url: url.trim() });
 
       setConfigOverview(result.overview);
       await singbox.onConfigImported(result.active_outbound || result.active_node);
@@ -132,6 +186,15 @@ function App() {
     await loadOverview();
   }, [configOverview, editingRouteRule, loadOverview]);
 
+  const handleDismissStartupTips = useCallback(() => {
+    if (suppressStartupTips) {
+      localStorage.setItem(STARTUP_TIPS_DISMISSED_KEY, String(Date.now()));
+    } else {
+      localStorage.removeItem(STARTUP_TIPS_DISMISSED_KEY);
+    }
+    setShowStartupTips(false);
+  }, [suppressStartupTips]);
+
   return (
     <div className="h-screen overflow-hidden bg-surface-base p-[clamp(0.25rem,0.55vw,0.375rem)]">
       <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[22px]">
@@ -145,6 +208,7 @@ function App() {
           onPageChange={setCurrentPage}
           isRunning={singbox.isRunning}
           onImportConfig={handleImportConfig}
+          onImportConfigUrl={handleImportConfigUrl}
           onClearConfig={handleClearConfig}
           configProfiles={singbox.configProfiles}
           activeConfigProfileId={singbox.activeConfigProfileId}
@@ -162,6 +226,7 @@ function App() {
             selectedOutboundTag={singbox.selectedOutboundTag}
             nodes={singbox.nodes}
             profiles={singbox.profiles}
+            runtimeDebug={singbox.runtimeDebug}
             hasConfig={singbox.hasConfig}
             tunEnabled={configOverview?.inbounds.some((inbound) => inbound.inbound_type === "tun") ?? false}
             onToggle={singbox.toggleProxy}
@@ -246,6 +311,16 @@ function App() {
           initialValue={JSON.stringify(editingRouteRule.rule.raw, null, 2)}
           onClose={() => setEditingRouteRule(null)}
           onSave={handleSaveRouteRule}
+        />
+      )}
+
+      {showStartupTips && (
+        <StartupTipsModal
+          appVersion={appVersion}
+          coreVersion={coreVersion}
+          suppressForSevenDays={suppressStartupTips}
+          onSuppressForSevenDaysChange={setSuppressStartupTips}
+          onClose={handleDismissStartupTips}
         />
       )}
     </div>

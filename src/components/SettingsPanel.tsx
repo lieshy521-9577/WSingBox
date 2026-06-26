@@ -23,7 +23,7 @@ const defaultSettings: AppSettings = {
   tun_sniff_override_destination: true,
   tun_address: ["172.19.0.1/30"],
   dns_final: "google",
-  dns_strategy: "ipv4_only",
+  dns_strategy: "auto",
   dns_servers: [],
 };
 

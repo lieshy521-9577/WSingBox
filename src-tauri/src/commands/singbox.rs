@@ -1,18 +1,26 @@
-use std::fs;
-use std::process::Command;
-use std::thread;
-use std::time::Duration;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use crate::apply_tray_icon;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use std::fs;
 use std::fs::OpenOptions;
 use std::net::TcpStream;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+use std::process::Command;
 use std::process::Stdio;
+use std::thread;
+use std::time::Duration;
+use tauri::Manager;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const DEPRECATED_ENV_VARS: [(&str, &str); 6] = [
+    ("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true"),
+    ("ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM", "true"),
+    ("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true"),
+    ("ENABLE_DEPRECATED_NETWORK_INTERFACE_ADDRESS", "true"),
+    ("ENABLE_DEPRECATED_DEFAULT_INTERFACE_ADDRESS", "true"),
+    ("ENABLE_DEPRECATED_LEGACY_OOM_KILLER", "true"),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ProxyStateSnapshot {
@@ -37,7 +45,9 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     let bootstrap_config_path = format!("{}\\config.bootstrap.json", config_dir);
 
     if !std::path::Path::new(&config_path).exists() {
-        return Err("Configuration file not found. Please import a config or add nodes first.".to_string());
+        return Err(
+            "Configuration file not found. Please import a config or add nodes first.".to_string(),
+        );
     }
 
     prepare_runtime_config_for_bootstrap(&config_path)?;
@@ -59,19 +69,55 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path)?;
     let mut started_with_fallback = false;
     let mut started = false;
+    let mut startup_config_path = config_path.clone();
 
-    launch_singbox_with_config(&singbox_path, &config_path, &log_path, tun_enabled)?;
+    if build_rule_set_bootstrap_config(&config_path, &bootstrap_config_path, Some("direct"))? {
+        startup_config_path = bootstrap_config_path.clone();
+    }
+
+    launch_singbox_with_config(&singbox_path, &startup_config_path, &log_path, tun_enabled)?;
 
     if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
         started = true;
     } else {
         let details = get_runtime_start_failure_details().unwrap_or_default();
-        if should_retry_without_remote_rule_sets(&details) {
-            let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(&config_path, &bootstrap_config_path)?;
+        let has_remote_rule_sets = config_has_remote_rule_sets(&config_path);
+        let should_retry_rule_set_bootstrap =
+            should_retry_without_remote_rule_sets(&details) || has_remote_rule_sets;
+
+        if should_retry_rule_set_bootstrap {
+            let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(
+                &config_path,
+                &bootstrap_config_path,
+            )?;
             if removed_rule_sets > 0 {
                 stop_singbox_process().ok();
                 clear_runtime_log_file().ok();
-                launch_singbox_with_config(&singbox_path, &bootstrap_config_path, &log_path, tun_enabled)?;
+                launch_singbox_with_config(
+                    &singbox_path,
+                    &bootstrap_config_path,
+                    &log_path,
+                    tun_enabled,
+                )?;
+                if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
+                    started_with_fallback = true;
+                    started = true;
+                }
+            }
+        } else if !started {
+            let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(
+                &config_path,
+                &bootstrap_config_path,
+            )?;
+            if removed_rule_sets > 0 && details.to_ascii_lowercase().contains("rule-set") {
+                stop_singbox_process().ok();
+                clear_runtime_log_file().ok();
+                launch_singbox_with_config(
+                    &singbox_path,
+                    &bootstrap_config_path,
+                    &log_path,
+                    tun_enabled,
+                )?;
                 if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
                     started_with_fallback = true;
                     started = true;
@@ -83,16 +129,21 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     if !started {
         let details = get_runtime_start_failure_details().unwrap_or_default();
         if details.is_empty() {
-            return Err("sing-box failed to start. The mixed inbound port did not open in time.".to_string());
+            return Err(
+                "sing-box failed to start. The mixed inbound port did not open in time."
+                    .to_string(),
+            );
         }
         return Err(format!("sing-box failed to start. {}", details));
     }
 
-    set_system_proxy_internal(&proxy_host, proxy_port)?;
+    let proxy_applied = set_system_proxy_internal(&proxy_host, proxy_port)?;
     let _ = apply_tray_icon(&app_handle, true);
 
     Ok(if started_with_fallback {
         "sing-box started with remote rule-set bootstrap skipped".to_string()
+    } else if !proxy_applied {
+        "sing-box started; existing system proxy was left unchanged".to_string()
     } else if tun_enabled {
         "sing-box started successfully with TUN elevation".to_string()
     } else {
@@ -174,7 +225,10 @@ fn stop_singbox_process() -> Result<(), String> {
             .map_err(|e| format!("Failed to request elevated stop for sing-box: {}", e))?;
 
         if !result.status.success() {
-            return Err("Failed to stop sing-box with elevation. The UAC prompt may have been denied.".to_string());
+            return Err(
+                "Failed to stop sing-box with elevation. The UAC prompt may have been denied."
+                    .to_string(),
+            );
         }
 
         thread::sleep(Duration::from_millis(800));
@@ -206,8 +260,8 @@ pub async fn get_runtime_logs() -> Result<Vec<RuntimeLogEntry>, String> {
         return Ok(vec![]);
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read runtime log file: {}", e))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read runtime log file: {}", e))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let start = lines.len().saturating_sub(500);
@@ -224,18 +278,24 @@ pub async fn clear_runtime_logs() -> Result<String, String> {
     Ok("Runtime logs cleared".to_string())
 }
 
-fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
+fn set_system_proxy_internal(host: &str, port: u16) -> Result<bool, String> {
     save_proxy_state_snapshot()?;
 
     let proxy_addr = format!("{}:{}", host, port);
+    if has_external_system_proxy(&proxy_addr) {
+        return Ok(false);
+    }
 
     hidden_command("reg")
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
-            "/t", "REG_DWORD",
-            "/d", "1",
+            "/v",
+            "ProxyEnable",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
             "/f",
         ])
         .output()
@@ -245,9 +305,12 @@ fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyServer",
-            "/t", "REG_SZ",
-            "/d", &proxy_addr,
+            "/v",
+            "ProxyServer",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &proxy_addr,
             "/f",
         ])
         .output()
@@ -257,16 +320,42 @@ fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyOverride",
-            "/t", "REG_SZ",
-            "/d", "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;192.168.*;<local>",
+            "/v",
+            "ProxyOverride",
+            "/t",
+            "REG_SZ",
+            "/d",
+            "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;192.168.*;<local>",
             "/f",
         ])
         .output()
         .ok();
 
     notify_internet_settings_change();
-    Ok(())
+    Ok(true)
+}
+
+fn has_external_system_proxy(target_proxy_addr: &str) -> bool {
+    if query_proxy_enable().unwrap_or(0) != 1 {
+        return false;
+    }
+
+    query_reg_value("ProxyServer")
+        .ok()
+        .flatten()
+        .map(|value| {
+            normalize_proxy_server_value(&value) != normalize_proxy_server_value(target_proxy_addr)
+        })
+        .unwrap_or(false)
+}
+
+fn normalize_proxy_server_value(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
 }
 
 fn clear_system_proxy_internal() -> Result<(), String> {
@@ -274,9 +363,12 @@ fn clear_system_proxy_internal() -> Result<(), String> {
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
-            "/t", "REG_DWORD",
-            "/d", "0",
+            "/v",
+            "ProxyEnable",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "0",
             "/f",
         ])
         .output()
@@ -330,32 +422,18 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
     use tauri::Manager;
 
     if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidates = vec![
-                exe_dir.join("sing-box.exe"),
-                exe_dir.join("bin").join("sing-box.exe"),
-                exe_dir.join("..").join("..").join("..").join("bin").join("sing-box.exe"),
-                exe_dir.join("..").join("..").join("..").join("..").join("bin").join("sing-box.exe"),
-            ];
-
-            for candidate in candidates {
-                if candidate.exists() {
-                    let path = candidate
-                        .canonicalize()
-                        .unwrap_or(candidate)
-                        .to_string_lossy()
-                        .to_string();
-                    let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_string();
-                    return Ok(path);
-                }
+        for candidate in collect_binary_candidates_from_exe(&exe_path) {
+            if let Some(path) = normalize_existing_binary_path(candidate) {
+                return Ok(path);
             }
         }
     }
 
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        let resource_bin = resource_dir.join("bin").join("sing-box.exe");
-        if resource_bin.exists() {
-            return Ok(resource_bin.to_string_lossy().to_string());
+        for candidate in collect_binary_candidates_from_resource_dir(&resource_dir) {
+            if let Some(path) = normalize_existing_binary_path(candidate) {
+                return Ok(path);
+            }
         }
     }
 
@@ -377,12 +455,80 @@ fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> 
 }
 
 pub fn find_singbox_binary_for_version() -> Result<String, String> {
-    if let Ok(dev_path) = std::fs::canonicalize(r"C:\_dCode\SingBox\bin\sing-box.exe") {
-        if dev_path.exists() {
-            return Ok(dev_path.to_string_lossy().to_string());
+    if let Ok(exe_path) = std::env::current_exe() {
+        for candidate in collect_binary_candidates_from_exe(&exe_path) {
+            if let Some(path) = normalize_existing_binary_path(candidate) {
+                return Ok(path);
+            }
         }
     }
+
+    if let Ok(output) = hidden_command("where").arg("sing-box").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(path.lines().next().unwrap_or(&path).to_string());
+            }
+        }
+    }
+
+    if let Some(path) = normalize_existing_binary_path(std::path::PathBuf::from(
+        r"C:\_dCode\SingBox\bin\sing-box.exe",
+    )) {
+        return Ok(path);
+    }
+
     Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
+}
+
+fn collect_binary_candidates_from_exe(exe_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(exe_dir) = exe_path.parent() {
+        candidates.push(exe_dir.join("sing-box.exe"));
+        candidates.push(exe_dir.join("bin").join("sing-box.exe"));
+        candidates.push(exe_dir.join("resources").join("sing-box.exe"));
+        candidates.push(exe_dir.join("resources").join("bin").join("sing-box.exe"));
+        candidates.push(
+            exe_dir
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("bin")
+                .join("sing-box.exe"),
+        );
+        candidates.push(
+            exe_dir
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("bin")
+                .join("sing-box.exe"),
+        );
+    }
+    candidates
+}
+
+fn collect_binary_candidates_from_resource_dir(
+    resource_dir: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    vec![
+        resource_dir.join("sing-box.exe"),
+        resource_dir.join("bin").join("sing-box.exe"),
+    ]
+}
+
+fn normalize_existing_binary_path(candidate: std::path::PathBuf) -> Option<String> {
+    if !candidate.exists() {
+        return None;
+    }
+
+    let path = candidate
+        .canonicalize()
+        .unwrap_or(candidate)
+        .to_string_lossy()
+        .to_string();
+    Some(path.strip_prefix(r"\\?\").unwrap_or(&path).to_string())
 }
 
 fn hidden_command(program: &str) -> Command {
@@ -390,6 +536,21 @@ fn hidden_command(program: &str) -> Command {
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+pub(crate) fn apply_deprecated_envs(command: &mut Command) -> &mut Command {
+    for (key, value) in DEPRECATED_ENV_VARS {
+        command.env(key, value);
+    }
+    command
+}
+
+fn deprecated_env_powershell_prefix() -> String {
+    DEPRECATED_ENV_VARS
+        .iter()
+        .map(|(key, value)| format!("$env:{key}={};", quote_powershell_literal(value)))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn launch_singbox_with_config(
@@ -402,8 +563,10 @@ fn launch_singbox_with_config(
         let singbox_path_quoted = quote_powershell_literal(singbox_path);
         let config_path_quoted = quote_powershell_literal(config_path);
         let log_path_quoted = quote_powershell_literal(log_path);
+        let env_prefix = deprecated_env_powershell_prefix();
         let elevated_command = format!(
-            "& {singbox} run -c {config} *>> {log}",
+            "{env_prefix} & {singbox} run -c {config} *>> {log}",
+            env_prefix = env_prefix,
             singbox = singbox_path_quoted,
             config = config_path_quoted,
             log = log_path_quoted,
@@ -420,7 +583,10 @@ fn launch_singbox_with_config(
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("Failed to elevate sing-box (UAC denied?): {}", stderr));
+            return Err(format!(
+                "Failed to elevate sing-box (UAC denied?): {}",
+                stderr
+            ));
         }
     } else {
         let log_file = open_runtime_log_file()?;
@@ -428,7 +594,8 @@ fn launch_singbox_with_config(
             .try_clone()
             .map_err(|e| format!("Failed to clone runtime log file handle: {}", e))?;
 
-        hidden_command(singbox_path)
+        let mut command = hidden_command(singbox_path);
+        apply_deprecated_envs(&mut command)
             .args(["run", "-c", config_path])
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_file_err))
@@ -460,8 +627,11 @@ fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String>
     let mut config: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse config for bootstrap preparation: {}", e))?;
 
+    let changed_dns = sanitize_runtime_dns_for_bootstrap(&mut config);
+    let changed_selector = pin_top_selector_to_leaf_node(&mut config)?;
     let selected_outbound = detect_active_outbound_tag(&config);
-    let mut changed = false;
+    let changed_dns_detour = align_runtime_dns_detours(&mut config, selected_outbound.as_deref());
+    let mut changed = changed_dns || changed_selector || changed_dns_detour;
 
     if let Some(rule_sets) = config
         .get_mut("route")
@@ -469,10 +639,7 @@ fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String>
         .and_then(|value| value.as_array_mut())
     {
         for rule_set in rule_sets {
-            let is_remote = rule_set
-                .get("type")
-                .and_then(|value| value.as_str())
-                == Some("remote");
+            let is_remote = rule_set.get("type").and_then(|value| value.as_str()) == Some("remote");
             if !is_remote {
                 continue;
             }
@@ -480,8 +647,13 @@ fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String>
             if let Some(obj) = rule_set.as_object_mut() {
                 match &selected_outbound {
                     Some(outbound) if !outbound.is_empty() => {
-                        if obj.get("download_detour").and_then(|value| value.as_str()) != Some(outbound.as_str()) {
-                            obj.insert("download_detour".to_string(), serde_json::Value::String(outbound.clone()));
+                        if obj.get("download_detour").and_then(|value| value.as_str())
+                            != Some(outbound.as_str())
+                        {
+                            obj.insert(
+                                "download_detour".to_string(),
+                                serde_json::Value::String(outbound.clone()),
+                            );
                             changed = true;
                         }
                     }
@@ -505,29 +677,361 @@ fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String>
     Ok(())
 }
 
+fn align_runtime_dns_detours(
+    config: &mut serde_json::Value,
+    selected_outbound: Option<&str>,
+) -> bool {
+    let outbound_tags = collect_outbound_tags(config);
+    let valid_selected = selected_outbound
+        .filter(|tag| outbound_tags.contains(*tag))
+        .map(str::to_string);
+    let Some(servers) = config
+        .get_mut("dns")
+        .and_then(|dns| dns.get_mut("servers"))
+        .and_then(|value| value.as_array_mut())
+    else {
+        return false;
+    };
+
+    let mut changed = false;
+    for server in servers {
+        let Some(obj) = server.as_object_mut() else {
+            continue;
+        };
+
+        let tag = obj
+            .get("tag")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if tag == "local" {
+            if obj.get("detour").and_then(|value| value.as_str()) != Some("direct") {
+                obj.insert(
+                    "detour".to_string(),
+                    serde_json::Value::String("direct".to_string()),
+                );
+                changed = true;
+            }
+            continue;
+        }
+
+        let is_remote_dns = tag == "google" || tag == "remote";
+        if !is_remote_dns {
+            if obj.remove("detour").is_some() {
+                changed = true;
+            }
+            continue;
+        }
+
+        match &valid_selected {
+            Some(outbound) => {
+                if obj.get("detour").and_then(|value| value.as_str()) != Some(outbound.as_str()) {
+                    obj.insert(
+                        "detour".to_string(),
+                        serde_json::Value::String(outbound.clone()),
+                    );
+                    changed = true;
+                }
+            }
+            None => {
+                if obj.remove("detour").is_some() {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    changed
+}
+
+fn collect_outbound_tags(config: &serde_json::Value) -> std::collections::HashSet<String> {
+    config
+        .get("outbounds")
+        .and_then(|value| value.as_array())
+        .map(|outbounds| {
+            outbounds
+                .iter()
+                .filter_map(|outbound| {
+                    outbound
+                        .get("tag")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn sanitize_runtime_dns_for_bootstrap(config: &mut serde_json::Value) -> bool {
+    let Some(dns) = config.get_mut("dns") else {
+        return false;
+    };
+
+    let mut changed = false;
+
+    if let Some(obj) = dns.as_object_mut() {
+        let is_auto_strategy = obj
+            .get("strategy")
+            .and_then(|value| value.as_str())
+            .map(|value| {
+                let strategy = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+                strategy.is_empty()
+                    || strategy == "auto"
+                    || strategy == "ipv4_only"
+                    || strategy == "ipv4only"
+                    || strategy == "ip4_only"
+                    || strategy == "ip4only"
+            })
+            .unwrap_or(false);
+
+        if is_auto_strategy {
+            obj.remove("strategy");
+            changed = true;
+        }
+    }
+
+    if let Some(rules) = dns.get_mut("rules").and_then(|value| value.as_array_mut()) {
+        let before = rules.len();
+        rules.retain(|rule| {
+            let routes_any_outbound = rule_routes_any_outbound(rule);
+            let routes_local_server =
+                rule.get("server").and_then(|value| value.as_str()) == Some("local");
+            !(routes_any_outbound && routes_local_server)
+        });
+        changed |= rules.len() != before;
+    }
+
+    if let Some(servers) = dns
+        .get_mut("servers")
+        .and_then(|value| value.as_array_mut())
+    {
+        for server in servers {
+            let Some(obj) = server.as_object_mut() else {
+                continue;
+            };
+
+            let is_google_tls = obj.get("tag").and_then(|value| value.as_str()) == Some("google")
+                && obj.get("address").and_then(|value| value.as_str()) == Some("tls://8.8.8.8");
+            let is_ali_doh = obj.get("tag").and_then(|value| value.as_str()) == Some("local")
+                && obj.get("address").and_then(|value| value.as_str())
+                    == Some("https://223.5.5.5/dns-query");
+            let is_local = obj.get("tag").and_then(|value| value.as_str()) == Some("local");
+
+            if is_google_tls {
+                obj.insert(
+                    "address".to_string(),
+                    serde_json::Value::String("tcp://8.8.8.8".to_string()),
+                );
+                changed = true;
+            }
+
+            if is_ali_doh {
+                obj.insert(
+                    "address".to_string(),
+                    serde_json::Value::String("223.5.5.5".to_string()),
+                );
+                changed = true;
+            }
+
+            if is_local && obj.get("detour").and_then(|value| value.as_str()) != Some("direct") {
+                obj.insert(
+                    "detour".to_string(),
+                    serde_json::Value::String("direct".to_string()),
+                );
+                changed = true;
+            }
+        }
+    }
+
+    changed |= ensure_runtime_default_domain_resolver(config);
+
+    changed
+}
+
+fn rule_routes_any_outbound(rule: &serde_json::Value) -> bool {
+    if rule.get("outbound").and_then(|value| value.as_str()) == Some("any") {
+        return true;
+    }
+
+    rule.get("outbound")
+        .and_then(|value| value.as_array())
+        .map(|items| items.iter().any(|item| item.as_str() == Some("any")))
+        .unwrap_or(false)
+}
+
+fn ensure_runtime_default_domain_resolver(config: &mut serde_json::Value) -> bool {
+    let has_local_dns = config
+        .get("dns")
+        .and_then(|dns| dns.get("servers"))
+        .and_then(|servers| servers.as_array())
+        .map(|servers| {
+            servers
+                .iter()
+                .any(|server| server.get("tag").and_then(|value| value.as_str()) == Some("local"))
+        })
+        .unwrap_or(false);
+
+    if !has_local_dns {
+        return false;
+    }
+
+    if config
+        .get("route")
+        .and_then(|value| value.as_object())
+        .is_none()
+    {
+        config["route"] = serde_json::json!({});
+    }
+
+    let Some(route) = config
+        .get_mut("route")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return false;
+    };
+
+    if route
+        .get("default_domain_resolver")
+        .and_then(|value| value.as_str())
+        == Some("local")
+    {
+        return false;
+    }
+
+    route.insert(
+        "default_domain_resolver".to_string(),
+        serde_json::Value::String("local".to_string()),
+    );
+    true
+}
+
+fn pin_top_selector_to_leaf_node(config: &mut serde_json::Value) -> Result<bool, String> {
+    let Some(outbounds) = config
+        .get_mut("outbounds")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return Ok(false);
+    };
+
+    let Some(top_index) = outbounds.iter().position(|outbound| {
+        outbound.get("type").and_then(|value| value.as_str()) == Some("selector")
+    }) else {
+        return Ok(false);
+    };
+
+    let Some(current_default) = outbounds[top_index]
+        .get("default")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(false);
+    };
+
+    let Some(leaf) = resolve_concrete_outbound_tag(outbounds, &current_default) else {
+        return Ok(false);
+    };
+
+    if leaf == current_default {
+        return Ok(false);
+    }
+
+    let top_members = outbounds[top_index]
+        .get("outbounds")
+        .and_then(|value| value.as_array())
+        .ok_or("Top selector has no outbounds".to_string())?;
+    let top_contains_leaf = top_members
+        .iter()
+        .any(|member| member.as_str() == Some(leaf.as_str()));
+    if !top_contains_leaf {
+        return Ok(false);
+    }
+
+    if let Some(obj) = outbounds[top_index].as_object_mut() {
+        obj.insert("default".to_string(), serde_json::Value::String(leaf));
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 fn detect_active_outbound_tag(config: &serde_json::Value) -> Option<String> {
     let outbounds = config.get("outbounds")?.as_array()?;
-    let selector = outbounds.iter().find(|outbound| {
-        outbound.get("type").and_then(|value| value.as_str()) == Some("selector")
-    }).or_else(|| outbounds.iter().find(|outbound| {
-        matches!(
-            outbound.get("type").and_then(|value| value.as_str()),
-            Some("selector" | "urltest")
-        )
-    }))?;
+    let selector = outbounds
+        .iter()
+        .find(|outbound| outbound.get("type").and_then(|value| value.as_str()) == Some("selector"))
+        .or_else(|| {
+            outbounds.iter().find(|outbound| {
+                matches!(
+                    outbound.get("type").and_then(|value| value.as_str()),
+                    Some("selector" | "urltest")
+                )
+            })
+        })?;
 
-    let default = selector
+    let preferred = selector
         .get("default")
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    default.or_else(|| {
+    let candidate = preferred.or_else(|| {
         selector
             .get("outbounds")
             .and_then(|value| value.as_array())
-            .and_then(|members| members.iter().find_map(|member| member.as_str().map(str::to_string)))
-    })
+            .and_then(|members| {
+                members
+                    .iter()
+                    .find_map(|member| member.as_str().map(str::to_string))
+            })
+    })?;
+
+    resolve_concrete_outbound_tag(outbounds, &candidate)
+}
+
+fn resolve_concrete_outbound_tag(
+    outbounds: &[serde_json::Value],
+    candidate: &str,
+) -> Option<String> {
+    let mut current = candidate.to_string();
+    let mut visited = std::collections::HashSet::new();
+
+    loop {
+        if !visited.insert(current.clone()) {
+            return Some(current);
+        }
+
+        let outbound = outbounds.iter().find(|item| {
+            item.get("tag").and_then(|value| value.as_str()) == Some(current.as_str())
+        })?;
+
+        let outbound_type = outbound
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if outbound_type != "selector" && outbound_type != "urltest" {
+            return Some(current);
+        }
+
+        if let Some(default) = outbound
+            .get("default")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            current = default.to_string();
+            continue;
+        }
+
+        if let Some(first_member) = outbound
+            .get("outbounds")
+            .and_then(|value| value.as_array())
+            .and_then(|members| members.iter().find_map(|member| member.as_str()))
+        {
+            current = first_member.to_string();
+            continue;
+        }
+
+        return Some(current);
+    }
 }
 
 fn should_retry_without_remote_rule_sets(details: &str) -> bool {
@@ -542,7 +1046,90 @@ fn should_retry_without_remote_rule_sets(details: &str) -> bool {
             || lower.contains("no such host"))
 }
 
-fn build_bootstrap_config_without_remote_rule_sets(config_path: &str, output_path: &str) -> Result<usize, String> {
+fn build_rule_set_bootstrap_config(
+    config_path: &str,
+    output_path: &str,
+    download_detour: Option<&str>,
+) -> Result<bool, String> {
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config for rule-set bootstrap: {}", e))?;
+    let mut config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config for rule-set bootstrap: {}", e))?;
+
+    let Some(rule_sets) = config
+        .get_mut("route")
+        .and_then(|route| route.get_mut("rule_set"))
+        .and_then(|value| value.as_array_mut())
+    else {
+        return Ok(false);
+    };
+
+    let mut changed = false;
+    let mut found_remote = false;
+
+    for rule_set in rule_sets {
+        let is_remote = rule_set.get("type").and_then(|value| value.as_str()) == Some("remote");
+        if !is_remote {
+            continue;
+        }
+
+        found_remote = true;
+        if let Some(obj) = rule_set.as_object_mut() {
+            match download_detour {
+                Some(detour) => {
+                    if obj.get("download_detour").and_then(|value| value.as_str()) != Some(detour) {
+                        obj.insert(
+                            "download_detour".to_string(),
+                            serde_json::Value::String(detour.to_string()),
+                        );
+                        changed = true;
+                    }
+                }
+                None => {
+                    if obj.remove("download_detour").is_some() {
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !found_remote {
+        return Ok(false);
+    }
+
+    let updated = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize rule-set bootstrap config: {}", e))?;
+    fs::write(output_path, updated)
+        .map_err(|e| format!("Failed to save rule-set bootstrap config: {}", e))?;
+
+    Ok(changed || found_remote)
+}
+
+fn config_has_remote_rule_sets(config_path: &str) -> bool {
+    let Ok(content) = fs::read_to_string(config_path) else {
+        return false;
+    };
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    config
+        .get("route")
+        .and_then(|route| route.get("rule_set"))
+        .and_then(|value| value.as_array())
+        .map(|rule_sets| {
+            rule_sets.iter().any(|rule_set| {
+                rule_set.get("type").and_then(|value| value.as_str()) == Some("remote")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn build_bootstrap_config_without_remote_rule_sets(
+    config_path: &str,
+    output_path: &str,
+) -> Result<usize, String> {
     let content = fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read config for bootstrap fallback: {}", e))?;
     let mut config: serde_json::Value = serde_json::from_str(&content)
@@ -557,10 +1144,7 @@ fn build_bootstrap_config_without_remote_rule_sets(config_path: &str, output_pat
     {
         let mut kept = Vec::with_capacity(rule_sets.len());
         for rule_set in rule_sets.iter() {
-            let is_remote = rule_set
-                .get("type")
-                .and_then(|value| value.as_str())
-                == Some("remote");
+            let is_remote = rule_set.get("type").and_then(|value| value.as_str()) == Some("remote");
             if is_remote {
                 if let Some(tag) = rule_set.get("tag").and_then(|value| value.as_str()) {
                     removed_tags.push(tag.to_string());
@@ -614,7 +1198,10 @@ fn rule_references_any_rule_set(rule: &serde_json::Value, removed_tags: &[String
     value
         .as_array()
         .map(|items| {
-            items.iter().filter_map(|item| item.as_str()).any(|tag| removed_tags.iter().any(|removed| removed == tag))
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .any(|tag| removed_tags.iter().any(|removed| removed == tag))
         })
         .unwrap_or(false)
 }
@@ -625,9 +1212,13 @@ fn get_runtime_start_failure_details() -> Result<String, String> {
         return Ok(String::new());
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read runtime log file: {}", e))?;
-    let lines: Vec<&str> = content.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read runtime log file: {}", e))?;
+    let lines: Vec<&str> = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
     if lines.is_empty() {
         return Ok(String::new());
     }
@@ -642,7 +1233,10 @@ fn get_runtime_start_failure_details() -> Result<String, String> {
     }
 
     let excerpt = lines.iter().rev().take(3).copied().collect::<Vec<_>>();
-    Ok(format!("Recent log: {}", excerpt.into_iter().rev().collect::<Vec<_>>().join(" | ")))
+    Ok(format!(
+        "Recent log: {}",
+        excerpt.into_iter().rev().collect::<Vec<_>>().join(" | ")
+    ))
 }
 
 fn open_runtime_log_file() -> Result<std::fs::File, String> {
@@ -656,8 +1250,7 @@ fn open_runtime_log_file() -> Result<std::fs::File, String> {
 
 fn clear_runtime_log_file() -> Result<(), String> {
     let path = get_runtime_log_file_path();
-    fs::write(&path, "")
-        .map_err(|e| format!("Failed to clear runtime log file: {}", e))
+    fs::write(&path, "").map_err(|e| format!("Failed to clear runtime log file: {}", e))
 }
 
 fn get_proxy_state_file_path() -> String {
@@ -678,8 +1271,7 @@ fn save_proxy_state_snapshot() -> Result<(), String> {
 
     let content = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("Failed to serialize proxy state snapshot: {}", e))?;
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to save proxy state snapshot: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save proxy state snapshot: {}", e))?;
     Ok(())
 }
 
@@ -710,7 +1302,8 @@ fn query_proxy_enable() -> Result<u32, String> {
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
+            "/v",
+            "ProxyEnable",
         ])
         .output()
         .map_err(|e| format!("Failed to query ProxyEnable: {}", e))?;
@@ -732,7 +1325,8 @@ fn query_reg_value(name: &str) -> Result<Option<String>, String> {
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", name,
+            "/v",
+            name,
         ])
         .output()
         .map_err(|e| format!("Failed to query registry value '{}': {}", name, e))?;
@@ -757,9 +1351,12 @@ fn write_proxy_enable(value: u32) -> Result<(), String> {
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
-            "/t", "REG_DWORD",
-            "/d", &value.to_string(),
+            "/v",
+            "ProxyEnable",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            &value.to_string(),
             "/f",
         ])
         .output()
@@ -774,9 +1371,12 @@ fn write_or_delete_reg_value(name: &str, value: Option<&str>) -> Result<(), Stri
             command.args([
                 "add",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-                "/v", name,
-                "/t", "REG_SZ",
-                "/d", value,
+                "/v",
+                name,
+                "/t",
+                "REG_SZ",
+                "/d",
+                value,
                 "/f",
             ]);
         }
@@ -784,7 +1384,8 @@ fn write_or_delete_reg_value(name: &str, value: Option<&str>) -> Result<(), Stri
             command.args([
                 "delete",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-                "/v", name,
+                "/v",
+                name,
                 "/f",
             ]);
         }
@@ -845,7 +1446,8 @@ fn parse_runtime_log_line(id: usize, line: &str) -> Option<RuntimeLogEntry> {
         "debug"
     } else {
         "info"
-    }.to_string();
+    }
+    .to_string();
 
     let (timestamp, message) = if let Some((first, rest)) = trimmed.split_once(' ') {
         if first.contains(':') || first.contains('T') {
@@ -875,9 +1477,9 @@ fn get_mixed_inbound_endpoint(config_path: &str) -> Result<(String, u16), String
         .get("inbounds")
         .and_then(|v| v.as_array())
         .and_then(|inbounds| {
-            inbounds.iter().find(|ib| {
-                ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed"
-            })
+            inbounds
+                .iter()
+                .find(|ib| ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed")
         })
         .ok_or("No mixed inbound found in current config".to_string())?;
 
@@ -904,9 +1506,9 @@ fn config_has_tun_inbound(config_path: &str) -> Result<bool, String> {
         .get("inbounds")
         .and_then(|v| v.as_array())
         .map(|inbounds| {
-            inbounds.iter().any(|inbound| {
-                inbound.get("type").and_then(|v| v.as_str()) == Some("tun")
-            })
+            inbounds
+                .iter()
+                .any(|inbound| inbound.get("type").and_then(|v| v.as_str()) == Some("tun"))
         })
         .unwrap_or(false))
 }

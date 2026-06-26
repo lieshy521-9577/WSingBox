@@ -25,18 +25,16 @@ pub(crate) fn apply_tray_icon(app: &tauri::AppHandle, connected: bool) -> Result
     let tray = app
         .tray_by_id("main-tray")
         .ok_or("Tray icon is not initialized".to_string())?;
-    let icon = tray_icon_image(connected)
-        .map_err(|e| format!("Failed to load tray icon: {}", e))?;
+    let icon =
+        tray_icon_image(connected).map_err(|e| format!("Failed to load tray icon: {}", e))?;
     let tooltip = if connected {
         "SingBox Client - Connected"
     } else {
         "SingBox Client - Disconnected"
     };
-    tray
-        .set_icon(Some(icon))
+    tray.set_icon(Some(icon))
         .map_err(|e| format!("Failed to update tray icon: {}", e))?;
-    tray
-        .set_tooltip(Some(tooltip))
+    tray.set_tooltip(Some(tooltip))
         .map_err(|e| format!("Failed to update tray tooltip: {}", e))?;
     Ok(())
 }
@@ -45,6 +43,7 @@ pub(crate) fn apply_tray_icon(app: &tauri::AppHandle, connected: bool) -> Result
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let icon = Image::from_bytes(APP_ICON)?;
@@ -87,7 +86,12 @@ pub fn run() {
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button, button_state, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        ..
+                    } = event
+                    {
                         if button == MouseButton::Left && button_state == MouseButtonState::Up {
                             let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
@@ -131,9 +135,11 @@ pub fn run() {
             config::generate_config,
             config::import_subscription,
             config::import_config_file,
+            config::import_config_url,
             config::get_config_overview,
             config::get_profiles,
             config::get_active_outbound,
+            config::get_runtime_debug_snapshot,
             config::get_config_profiles,
             config::get_active_config_profile,
             config::has_imported_config,

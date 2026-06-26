@@ -1,6 +1,6 @@
-use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::process::Command;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -15,9 +15,12 @@ pub async fn set_system_proxy(host: String, port: u16) -> Result<String, String>
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
-            "/t", "REG_DWORD",
-            "/d", "1",
+            "/v",
+            "ProxyEnable",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
             "/f",
         ])
         .output()
@@ -32,9 +35,12 @@ pub async fn set_system_proxy(host: String, port: u16) -> Result<String, String>
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyServer",
-            "/t", "REG_SZ",
-            "/d", &proxy_addr,
+            "/v",
+            "ProxyServer",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &proxy_addr,
             "/f",
         ])
         .output()
@@ -57,9 +63,12 @@ pub async fn clear_system_proxy() -> Result<String, String> {
         .args([
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
-            "/t", "REG_DWORD",
-            "/d", "0",
+            "/v",
+            "ProxyEnable",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "0",
             "/f",
         ])
         .output()
@@ -80,7 +89,8 @@ pub async fn get_proxy_status() -> Result<bool, String> {
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            "/v", "ProxyEnable",
+            "/v",
+            "ProxyEnable",
         ])
         .output()
         .map_err(|e| format!("Failed to query proxy status: {}", e))?;

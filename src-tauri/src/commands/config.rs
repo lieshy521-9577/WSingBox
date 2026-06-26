@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use winreg::enums::HKEY_CURRENT_USER;
 #[cfg(windows)]
@@ -18,7 +18,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyNode {
     pub id: String,
-    pub name: String,       // tag from sing-box config
+    pub name: String, // tag from sing-box config
     pub node_type: String,
     pub server: String,
     pub port: u16,
@@ -29,7 +29,7 @@ pub struct ProxyNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub tag: String,
-    pub profile_type: String,  // "selector" or "urltest"
+    pub profile_type: String, // "selector" or "urltest"
     pub outbounds: Vec<String>,
     pub default_outbound: String,
     pub interval: String,
@@ -42,7 +42,7 @@ pub struct ImportResult {
     pub overview: ConfigOverview,
     pub nodes: Vec<ProxyNode>,
     pub profiles: Vec<Profile>,
-    pub active_node: String,  // auto-selected node tag based on profile
+    pub active_node: String, // auto-selected node tag based on profile
     pub active_outbound: String,
 }
 
@@ -101,6 +101,14 @@ pub struct RouteRuleInfo {
     pub raw: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeDebugSnapshot {
+    pub route_final: String,
+    pub top_selector_tag: String,
+    pub top_selector_default: String,
+    pub active_leaf_outbound: String,
+}
+
 /// Persistent client settings applied to imported/generated configs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -138,11 +146,12 @@ fn default_dns_servers() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
             "tag": "google",
-            "address": "tls://8.8.8.8"
+            "address": "tcp://8.8.8.8"
         }),
         serde_json::json!({
             "tag": "local",
-            "address": "https://223.5.5.5/dns-query"
+            "address": "223.5.5.5",
+            "detour": "direct"
         }),
     ]
 }
@@ -162,7 +171,7 @@ fn default_app_settings() -> AppSettings {
         tun_sniff_override_destination: true,
         tun_address: vec!["172.19.0.1/30".to_string()],
         dns_final: "google".to_string(),
-        dns_strategy: "ipv4_only".to_string(),
+        dns_strategy: "auto".to_string(),
         dns_servers: default_dns_servers(),
     }
 }
@@ -170,19 +179,75 @@ fn default_app_settings() -> AppSettings {
 /// Import a sing-box config file: parse overview, extract nodes, determine active profile
 #[tauri::command]
 pub async fn import_config_file(file_path: String) -> Result<ImportResult, String> {
-    let content = fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let content =
+        fs::read_to_string(&file_path).map_err(|e| format!("Failed to read config file: {}", e))?;
+    import_config_content(&file_path, &content)
+}
 
-    let config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+#[tauri::command]
+pub async fn import_config_url(url: String) -> Result<ImportResult, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("Profile URL is empty".to_string());
+    }
+
+    let response = reqwest::Client::builder()
+        .user_agent("SingBox Client/0.1.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch profile URL: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Profile URL returned HTTP {}", response.status()));
+    }
+
+    let content = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read profile response: {}", e))?;
+    import_config_content(url, &content)
+}
+
+fn import_config_content(source_path: &str, content: &str) -> Result<ImportResult, String> {
+    let config = parse_profile_config_content(content)?;
 
     // Sanitize config for sing-box 1.12.0 compatibility
     let config = sanitize_config_for_v1_12(config);
     let settings = load_app_settings().unwrap_or_else(|_| infer_settings_from_config(&config));
     let config = apply_app_settings_to_config(config, &settings);
 
-    let profile = save_imported_config_profile(&file_path, &config)?;
+    let profile = save_imported_config_profile(source_path, &config)?;
     activate_config_profile_internal(&profile.id)
+}
+
+fn parse_profile_config_content(content: &str) -> Result<serde_json::Value, String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err("Profile content is empty".to_string());
+    }
+
+    if let Ok(config) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Ok(config);
+    }
+
+    use base64::Engine as _;
+    let compact = trimmed.lines().map(str::trim).collect::<Vec<_>>().join("");
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(compact.as_bytes())
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(compact.as_bytes()))
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(compact.as_bytes()))
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(compact.as_bytes()))
+        .map_err(|_| {
+            "Profile must be a sing-box JSON config, or base64-encoded sing-box JSON".to_string()
+        })?;
+    let decoded_text = String::from_utf8(decoded)
+        .map_err(|_| "Base64 profile is not valid UTF-8 text".to_string())?;
+
+    serde_json::from_str::<serde_json::Value>(decoded_text.trim())
+        .map_err(|e| format!("Failed to parse profile JSON: {}", e))
 }
 
 /// Get the current loaded config overview
@@ -193,18 +258,21 @@ pub async fn get_config_overview() -> Result<Option<ConfigOverview>, String> {
         return Ok(None);
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
 
-    let config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     let display_path = load_active_config_profile_id()
         .ok()
         .and_then(|id| {
-            load_config_profiles()
-                .ok()
-                .and_then(|profiles| profiles.into_iter().find(|profile| profile.id == id).map(|profile| profile.source_path))
+            load_config_profiles().ok().and_then(|profiles| {
+                profiles
+                    .into_iter()
+                    .find(|profile| profile.id == id)
+                    .map(|profile| profile.source_path)
+            })
         })
         .unwrap_or_else(|| config_path.to_string_lossy().to_string());
     Ok(Some(parse_config_overview(&display_path, &config)))
@@ -222,8 +290,8 @@ pub async fn get_app_settings() -> Result<AppSettings, String> {
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
-        let config: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        let config: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
         let mut settings = infer_settings_from_config(&config);
         settings.autostart_enabled = is_autostart_enabled().unwrap_or(false);
         return Ok(settings);
@@ -237,14 +305,19 @@ pub async fn get_app_settings() -> Result<AppSettings, String> {
 #[tauri::command]
 pub async fn get_singbox_core_version() -> Result<String, String> {
     let binary = super::singbox::find_singbox_binary_for_version()?;
-    let output = hidden_command(&binary)
+    let mut command = hidden_command(&binary);
+    let output = super::singbox::apply_deprecated_envs(&mut command)
         .arg("version")
         .output()
         .map_err(|e| format!("Failed to query sing-box version: {}", e))?;
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if text.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Ok(if stderr.is_empty() { "Unknown".to_string() } else { stderr });
+        return Ok(if stderr.is_empty() {
+            "Unknown".to_string()
+        } else {
+            stderr
+        });
     }
     Ok(text.lines().next().unwrap_or("Unknown").to_string())
 }
@@ -259,8 +332,8 @@ pub async fn save_app_settings(settings: AppSettings) -> Result<AppSettings, Str
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
-        let config: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        let config: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
         let updated = apply_app_settings_to_config(config, &settings);
         let updated_content = serde_json::to_string_pretty(&updated)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
@@ -279,12 +352,13 @@ pub async fn get_rule_sets_json() -> Result<Vec<serde_json::Value>, String> {
         return Ok(vec![]);
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
-    Ok(config.get("route")
+    Ok(config
+        .get("route")
         .and_then(|route| route.get("rule_set"))
         .and_then(|rule_sets| rule_sets.as_array())
         .cloned()
@@ -298,12 +372,13 @@ pub async fn get_route_rules_json() -> Result<Vec<serde_json::Value>, String> {
         return Ok(vec![]);
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
-    Ok(config.get("route")
+    Ok(config
+        .get("route")
         .and_then(|route| route.get("rules"))
         .and_then(|rules| rules.as_array())
         .cloned()
@@ -317,16 +392,23 @@ pub async fn save_route_rules_json(rules: Vec<serde_json::Value>) -> Result<Stri
         return Err("No active config profile is loaded".to_string());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
-    if config.get("route").and_then(|route| route.as_object()).is_none() {
+    if config
+        .get("route")
+        .and_then(|route| route.as_object())
+        .is_none()
+    {
         config["route"] = serde_json::json!({});
     }
 
-    if let Some(route) = config.get_mut("route").and_then(|route| route.as_object_mut()) {
+    if let Some(route) = config
+        .get_mut("route")
+        .and_then(|route| route.as_object_mut())
+    {
         route.insert("rules".to_string(), serde_json::Value::Array(rules));
     }
 
@@ -346,16 +428,23 @@ pub async fn save_rule_sets_json(rule_sets: Vec<serde_json::Value>) -> Result<St
         return Err("No active config profile is loaded".to_string());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
-    if config.get("route").and_then(|route| route.as_object()).is_none() {
+    if config
+        .get("route")
+        .and_then(|route| route.as_object())
+        .is_none()
+    {
         config["route"] = serde_json::json!({});
     }
 
-    if let Some(route) = config.get_mut("route").and_then(|route| route.as_object_mut()) {
+    if let Some(route) = config
+        .get_mut("route")
+        .and_then(|route| route.as_object_mut())
+    {
         route.insert("rule_set".to_string(), serde_json::Value::Array(rule_sets));
     }
 
@@ -390,7 +479,9 @@ pub async fn switch_config_profile(profile_id: String) -> Result<ImportResult, S
 #[tauri::command]
 pub async fn delete_config_profile(profile_id: String) -> Result<String, String> {
     let mut profiles = load_config_profiles()?;
-    let index = profiles.iter().position(|profile| profile.id == profile_id)
+    let index = profiles
+        .iter()
+        .position(|profile| profile.id == profile_id)
         .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
     let removed = profiles.remove(index);
 
@@ -422,10 +513,9 @@ pub async fn get_profiles() -> Result<Vec<Profile>, String> {
     if !path.exists() {
         return Ok(vec![]);
     }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read profiles: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse profiles: {}", e))
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read profiles: {}", e))?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse profiles: {}", e))
 }
 
 /// Get the currently selected outbound tag from the imported config
@@ -436,14 +526,55 @@ pub async fn get_active_outbound() -> Result<String, String> {
         return Ok(String::new());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     let profiles = extract_profiles(&config);
     let nodes = extract_nodes_from_config(&config);
     Ok(determine_active_outbound(&profiles, &nodes))
+}
+
+#[tauri::command]
+pub async fn get_runtime_debug_snapshot() -> Result<RuntimeDebugSnapshot, String> {
+    let config_path = get_config_dir().join("config.json");
+    if !config_path.exists() {
+        return Ok(RuntimeDebugSnapshot {
+            route_final: String::new(),
+            top_selector_tag: String::new(),
+            top_selector_default: String::new(),
+            active_leaf_outbound: String::new(),
+        });
+    }
+
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    let profiles = extract_profiles(&config);
+    let nodes = extract_nodes_from_config(&config);
+    let top_selector = profiles
+        .iter()
+        .find(|p| p.profile_type == "selector")
+        .or_else(|| profiles.first());
+
+    Ok(RuntimeDebugSnapshot {
+        route_final: config
+            .get("route")
+            .and_then(|route| route.get("final"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        top_selector_tag: top_selector
+            .map(|item| item.tag.clone())
+            .unwrap_or_default(),
+        top_selector_default: top_selector
+            .map(|item| item.default_outbound.clone())
+            .unwrap_or_default(),
+        active_leaf_outbound: determine_active_node(&profiles, &nodes),
+    })
 }
 
 /// Set the active outbound selection in the imported config by updating selector defaults
@@ -454,24 +585,29 @@ pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
         return Err("No imported config is loaded".to_string());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     let profiles = extract_profiles(&config);
     let nodes = extract_nodes_from_config(&config);
     if !profiles.iter().any(|p| p.tag == target_tag) && !nodes.iter().any(|n| n.id == target_tag) {
-        return Err(format!("Outbound '{}' not found in current config", target_tag));
+        return Err(format!(
+            "Outbound '{}' not found in current config",
+            target_tag
+        ));
     }
 
-    let top_selector = profiles.iter()
+    let top_selector = profiles
+        .iter()
         .find(|p| p.profile_type == "selector")
         .or_else(|| profiles.first())
         .ok_or("No outbound groups found in current config".to_string())?;
 
     let effective_target = if profiles.iter().any(|profile| profile.tag == target_tag) {
-        resolve_profile_leaf_target(&target_tag, &profiles, &nodes).unwrap_or_else(|| target_tag.clone())
+        resolve_profile_leaf_target(&target_tag, &profiles, &nodes)
+            .unwrap_or_else(|| target_tag.clone())
     } else {
         target_tag.clone()
     };
@@ -480,8 +616,34 @@ pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
         return Ok(target_tag);
     }
 
-    let path = build_selector_path(&top_selector.tag, &effective_target, &profiles)
-        .ok_or_else(|| format!("Outbound '{}' is not reachable from selector '{}'", target_tag, top_selector.tag))?;
+    if nodes.iter().any(|node| node.id == effective_target)
+        && top_selector
+            .outbounds
+            .iter()
+            .any(|member| member == &effective_target)
+    {
+        set_selector_default(&mut config, &top_selector.tag, &effective_target)?;
+
+        let updated_content = serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        fs::write(&config_path, updated_content)
+            .map_err(|e| format!("Failed to save config: {}", e))?;
+        persist_active_profile_config(&config)?;
+
+        let updated_profiles = extract_profiles(&config);
+        let updated_nodes = extract_nodes_from_config(&config);
+        save_profiles(&updated_profiles)?;
+
+        return Ok(determine_active_outbound(&updated_profiles, &updated_nodes));
+    }
+
+    let path =
+        build_selector_path(&top_selector.tag, &effective_target, &profiles).ok_or_else(|| {
+            format!(
+                "Outbound '{}' is not reachable from selector '{}'",
+                target_tag, top_selector.tag
+            )
+        })?;
 
     apply_selector_path(&mut config, &path)?;
 
@@ -492,9 +654,10 @@ pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
     persist_active_profile_config(&config)?;
 
     let updated_profiles = extract_profiles(&config);
+    let updated_nodes = extract_nodes_from_config(&config);
     save_profiles(&updated_profiles)?;
 
-    Ok(target_tag)
+    Ok(determine_active_outbound(&updated_profiles, &updated_nodes))
 }
 
 /// Remove an outbound group from the imported config and refresh saved profiles/nodes
@@ -505,13 +668,14 @@ pub async fn remove_group(group_tag: String) -> Result<String, String> {
         return Err("No imported config is loaded".to_string());
     }
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     let profiles = extract_profiles(&config);
-    let profile = profiles.iter()
+    let profile = profiles
+        .iter()
         .find(|p| p.tag == group_tag)
         .ok_or_else(|| format!("Group '{}' not found", group_tag))?;
 
@@ -519,28 +683,38 @@ pub async fn remove_group(group_tag: String) -> Result<String, String> {
         return Err(format!("Outbound '{}' is not a removable group", group_tag));
     }
 
-    let top_selector = profiles.iter()
+    let top_selector = profiles
+        .iter()
         .find(|p| p.profile_type == "selector")
         .or_else(|| profiles.first());
     if top_selector.map(|p| p.tag.as_str()) == Some(group_tag.as_str()) {
         return Err("Cannot delete the top-level active group".to_string());
     }
 
-    let outbounds = config.get_mut("outbounds")
+    let outbounds = config
+        .get_mut("outbounds")
         .and_then(|v| v.as_array_mut())
         .ok_or("Config has no outbounds array".to_string())?;
 
     let original_len = outbounds.len();
-    outbounds.retain(|outbound| outbound.get("tag").and_then(|v| v.as_str()) != Some(group_tag.as_str()));
+    outbounds.retain(|outbound| {
+        outbound.get("tag").and_then(|v| v.as_str()) != Some(group_tag.as_str())
+    });
     if outbounds.len() == original_len {
         return Err(format!("Group '{}' not found in outbounds", group_tag));
     }
 
-    let fallback_tag = outbounds.iter()
+    let fallback_tag = outbounds
+        .iter()
         .find_map(|outbound| {
             let outbound_type = outbound.get("type").and_then(|v| v.as_str()).unwrap_or("");
             let tag = outbound.get("tag").and_then(|v| v.as_str()).unwrap_or("");
-            if tag.is_empty() || tag == group_tag || outbound_type == "direct" || outbound_type == "block" || outbound_type == "dns" {
+            if tag.is_empty()
+                || tag == group_tag
+                || outbound_type == "direct"
+                || outbound_type == "block"
+                || outbound_type == "dns"
+            {
                 None
             } else {
                 Some(tag.to_string())
@@ -549,18 +723,30 @@ pub async fn remove_group(group_tag: String) -> Result<String, String> {
         .unwrap_or_else(|| "direct".to_string());
 
     for outbound in outbounds.iter_mut() {
-        if matches!(outbound.get("type").and_then(|v| v.as_str()), Some("selector" | "urltest")) {
+        if matches!(
+            outbound.get("type").and_then(|v| v.as_str()),
+            Some("selector" | "urltest")
+        ) {
             if let Some(members) = outbound.get_mut("outbounds").and_then(|v| v.as_array_mut()) {
                 members.retain(|member| member.as_str() != Some(group_tag.as_str()));
             }
-            let default_is_deleted = outbound.get("default").and_then(|v| v.as_str()) == Some(group_tag.as_str());
+            let default_is_deleted =
+                outbound.get("default").and_then(|v| v.as_str()) == Some(group_tag.as_str());
             if default_is_deleted {
-                let replacement = outbound.get("outbounds")
+                let replacement = outbound
+                    .get("outbounds")
                     .and_then(|v| v.as_array())
-                    .and_then(|members| members.iter().find_map(|member| member.as_str().map(String::from)))
+                    .and_then(|members| {
+                        members
+                            .iter()
+                            .find_map(|member| member.as_str().map(String::from))
+                    })
                     .unwrap_or_else(|| fallback_tag.clone());
                 if let Some(obj) = outbound.as_object_mut() {
-                    obj.insert("default".to_string(), serde_json::Value::String(replacement));
+                    obj.insert(
+                        "default".to_string(),
+                        serde_json::Value::String(replacement),
+                    );
                 }
             }
         }
@@ -568,13 +754,19 @@ pub async fn remove_group(group_tag: String) -> Result<String, String> {
 
     if let Some(route) = config.get_mut("route").and_then(|v| v.as_object_mut()) {
         if route.get("final").and_then(|v| v.as_str()) == Some(group_tag.as_str()) {
-            route.insert("final".to_string(), serde_json::Value::String(fallback_tag.clone()));
+            route.insert(
+                "final".to_string(),
+                serde_json::Value::String(fallback_tag.clone()),
+            );
         }
     }
 
     if let Some(dns) = config.get_mut("dns").and_then(|v| v.as_object_mut()) {
         if dns.get("final").and_then(|v| v.as_str()) == Some(group_tag.as_str()) {
-            dns.insert("final".to_string(), serde_json::Value::String(fallback_tag.clone()));
+            dns.insert(
+                "final".to_string(),
+                serde_json::Value::String(fallback_tag.clone()),
+            );
         }
     }
 
@@ -594,7 +786,8 @@ pub async fn remove_group(group_tag: String) -> Result<String, String> {
 
 /// Extract proxy nodes from sing-box outbounds array
 fn extract_nodes_from_config(config: &serde_json::Value) -> Vec<ProxyNode> {
-    config.get("outbounds")
+    config
+        .get("outbounds")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -603,10 +796,25 @@ fn extract_nodes_from_config(config: &serde_json::Value) -> Vec<ProxyNode> {
                     !SPECIAL_OUTBOUND_TYPES.contains(&otype)
                 })
                 .map(|outbound| {
-                    let node_type = outbound.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                    let tag = outbound.get("tag").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
-                    let server = outbound.get("server").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let port = outbound.get("server_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                    let node_type = outbound
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let tag = outbound
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unnamed")
+                        .to_string();
+                    let server = outbound
+                        .get("server")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let port = outbound
+                        .get("server_port")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u16;
 
                     // Collect all protocol-specific settings (everything except type/tag/server/server_port)
                     let mut settings = serde_json::Map::new();
@@ -634,7 +842,8 @@ fn extract_nodes_from_config(config: &serde_json::Value) -> Vec<ProxyNode> {
 
 /// Extract selector/urltest profiles from outbounds
 fn extract_profiles(config: &serde_json::Value) -> Vec<Profile> {
-    config.get("outbounds")
+    config
+        .get("outbounds")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -643,17 +852,49 @@ fn extract_profiles(config: &serde_json::Value) -> Vec<Profile> {
                     otype == "selector" || otype == "urltest"
                 })
                 .map(|outbound| {
-                    let profile_type = outbound.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let tag = outbound.get("tag").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let outbounds = outbound.get("outbounds")
+                    let profile_type = outbound
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let tag = outbound
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let outbounds = outbound
+                        .get("outbounds")
                         .and_then(|v| v.as_array())
-                        .map(|members| members.iter().filter_map(|m| m.as_str().map(String::from)).collect())
+                        .map(|members| {
+                            members
+                                .iter()
+                                .filter_map(|m| m.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    let default_outbound = outbound.get("default").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let interval = outbound.get("interval").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let tolerance = outbound.get("tolerance").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let default_outbound = outbound
+                        .get("default")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let interval = outbound
+                        .get("interval")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let tolerance = outbound
+                        .get("tolerance")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
 
-                    Profile { tag, profile_type, outbounds, default_outbound, interval, tolerance }
+                    Profile {
+                        tag,
+                        profile_type,
+                        outbounds,
+                        default_outbound,
+                        interval,
+                        tolerance,
+                    }
                 })
                 .collect()
         })
@@ -664,7 +905,8 @@ fn extract_profiles(config: &serde_json::Value) -> Vec<Profile> {
 /// Logic: find the top-level selector -> get its default -> if default is another group, recurse
 fn determine_active_node(profiles: &[Profile], nodes: &[ProxyNode]) -> String {
     // Find the top-level selector (usually tagged "proxy")
-    let top_selector = profiles.iter()
+    let top_selector = profiles
+        .iter()
         .find(|p| p.profile_type == "selector")
         .or_else(|| profiles.first());
 
@@ -679,7 +921,9 @@ fn determine_active_node(profiles: &[Profile], nodes: &[ProxyNode]) -> String {
         if let Some(sub_profile) = profiles.iter().find(|p| p.tag == default) {
             // For urltest, the first outbound is typically the "best"
             // At runtime sing-box will auto-select, but we show the first as default
-            return sub_profile.outbounds.first()
+            return sub_profile
+                .outbounds
+                .first()
                 .filter(|tag| nodes.iter().any(|n| n.id == **tag))
                 .cloned()
                 .unwrap_or_default();
@@ -696,7 +940,8 @@ fn determine_active_node(profiles: &[Profile], nodes: &[ProxyNode]) -> String {
 }
 
 fn determine_active_outbound(profiles: &[Profile], nodes: &[ProxyNode]) -> String {
-    let top_selector = profiles.iter()
+    let top_selector = profiles
+        .iter()
         .find(|p| p.profile_type == "selector")
         .or_else(|| profiles.first());
 
@@ -715,7 +960,11 @@ fn determine_active_outbound(profiles: &[Profile], nodes: &[ProxyNode]) -> Strin
     nodes.first().map(|n| n.id.clone()).unwrap_or_default()
 }
 
-fn resolve_profile_leaf_target(target_tag: &str, profiles: &[Profile], nodes: &[ProxyNode]) -> Option<String> {
+fn resolve_profile_leaf_target(
+    target_tag: &str,
+    profiles: &[Profile],
+    nodes: &[ProxyNode],
+) -> Option<String> {
     let profile = profiles.iter().find(|profile| profile.tag == target_tag)?;
 
     if profile.profile_type == "urltest" {
@@ -725,7 +974,11 @@ fn resolve_profile_leaf_target(target_tag: &str, profiles: &[Profile], nodes: &[
     let default = if !profile.default_outbound.is_empty() {
         profile.default_outbound.as_str()
     } else {
-        profile.outbounds.first().map(|item| item.as_str()).unwrap_or("")
+        profile
+            .outbounds
+            .first()
+            .map(|item| item.as_str())
+            .unwrap_or("")
     };
 
     if default.is_empty() {
@@ -739,23 +992,36 @@ fn resolve_profile_leaf_target(target_tag: &str, profiles: &[Profile], nodes: &[
     resolve_profile_leaf_target(default, profiles, nodes)
 }
 
-fn build_selector_path(root_tag: &str, target_tag: &str, profiles: &[Profile]) -> Option<Vec<(String, String)>> {
+fn build_selector_path(
+    root_tag: &str,
+    target_tag: &str,
+    profiles: &[Profile],
+) -> Option<Vec<(String, String)>> {
     let profile = profiles.iter().find(|p| p.tag == root_tag)?;
 
     for outbound in &profile.outbounds {
         if outbound == target_tag {
             return Some(vec![(root_tag.to_string(), target_tag.to_string())]);
         }
+    }
 
+    for outbound in &profile.outbounds {
         if let Some(child_profile) = profiles.iter().find(|p| p.tag == *outbound) {
             if child_profile.profile_type == "selector" {
-                if let Some(mut child_path) = build_selector_path(&child_profile.tag, target_tag, profiles) {
+                if let Some(mut child_path) =
+                    build_selector_path(&child_profile.tag, target_tag, profiles)
+                {
                     let mut path = vec![(root_tag.to_string(), child_profile.tag.clone())];
                     path.append(&mut child_path);
                     return Some(path);
                 }
             } else if child_profile.profile_type == "urltest" {
-                if child_profile.tag == target_tag || child_profile.outbounds.iter().any(|member| member == target_tag) {
+                if child_profile.tag == target_tag
+                    || child_profile
+                        .outbounds
+                        .iter()
+                        .any(|member| member == target_tag)
+                {
                     return Some(vec![(root_tag.to_string(), child_profile.tag.clone())]);
                 }
             }
@@ -765,31 +1031,55 @@ fn build_selector_path(root_tag: &str, target_tag: &str, profiles: &[Profile]) -
     None
 }
 
-fn apply_selector_path(config: &mut serde_json::Value, path: &[(String, String)]) -> Result<(), String> {
-    let outbounds = config.get_mut("outbounds")
+fn apply_selector_path(
+    config: &mut serde_json::Value,
+    path: &[(String, String)],
+) -> Result<(), String> {
+    for (selector_tag, next_tag) in path {
+        set_selector_default(config, selector_tag, next_tag)?;
+    }
+
+    Ok(())
+}
+
+fn set_selector_default(
+    config: &mut serde_json::Value,
+    selector_tag: &str,
+    next_tag: &str,
+) -> Result<(), String> {
+    let outbounds = config
+        .get_mut("outbounds")
         .and_then(|v| v.as_array_mut())
         .ok_or("Config has no outbounds array".to_string())?;
 
-    for (selector_tag, next_tag) in path {
-        let outbound = outbounds.iter_mut()
-            .find(|outbound| outbound.get("tag").and_then(|v| v.as_str()) == Some(selector_tag.as_str()))
-            .ok_or_else(|| format!("Selector '{}' not found in config", selector_tag))?;
+    let outbound = outbounds
+        .iter_mut()
+        .find(|outbound| outbound.get("tag").and_then(|v| v.as_str()) == Some(selector_tag))
+        .ok_or_else(|| format!("Selector '{}' not found in config", selector_tag))?;
 
-        if outbound.get("type").and_then(|v| v.as_str()) != Some("selector") {
-            continue;
-        }
+    if outbound.get("type").and_then(|v| v.as_str()) != Some("selector") {
+        return Ok(());
+    }
 
-        let members = outbound.get("outbounds")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| format!("Selector '{}' has no outbounds", selector_tag))?;
-        let contains_target = members.iter().any(|member| member.as_str() == Some(next_tag.as_str()));
-        if !contains_target {
-            return Err(format!("Selector '{}' does not contain '{}'", selector_tag, next_tag));
-        }
+    let members = outbound
+        .get("outbounds")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("Selector '{}' has no outbounds", selector_tag))?;
+    let contains_target = members
+        .iter()
+        .any(|member| member.as_str() == Some(next_tag));
+    if !contains_target {
+        return Err(format!(
+            "Selector '{}' does not contain '{}'",
+            selector_tag, next_tag
+        ));
+    }
 
-        if let Some(obj) = outbound.as_object_mut() {
-            obj.insert("default".to_string(), serde_json::Value::String(next_tag.clone()));
-        }
+    if let Some(obj) = outbound.as_object_mut() {
+        obj.insert(
+            "default".to_string(),
+            serde_json::Value::String(next_tag.to_string()),
+        );
     }
 
     Ok(())
@@ -803,11 +1093,11 @@ pub async fn get_nodes() -> Result<Vec<ProxyNode>, String> {
         return Ok(vec![]);
     }
 
-    let content = fs::read_to_string(&nodes_path)
-        .map_err(|e| format!("Failed to read nodes: {}", e))?;
+    let content =
+        fs::read_to_string(&nodes_path).map_err(|e| format!("Failed to read nodes: {}", e))?;
 
-    let nodes: Vec<ProxyNode> = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse nodes: {}", e))?;
+    let nodes: Vec<ProxyNode> =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse nodes: {}", e))?;
 
     Ok(nodes)
 }
@@ -849,7 +1139,8 @@ pub async fn update_node(
     settings: serde_json::Value,
 ) -> Result<ProxyNode, String> {
     let mut nodes = get_nodes().await.unwrap_or_default();
-    let node = nodes.iter_mut()
+    let node = nodes
+        .iter_mut()
         .find(|node| node.id == id)
         .ok_or("Node not found".to_string())?;
 
@@ -892,7 +1183,9 @@ pub async fn generate_config(selected_node_id: String) -> Result<String, String>
 
     // Otherwise generate a basic config from the selected node
     let nodes = get_nodes().await.unwrap_or_default();
-    let selected = nodes.iter().find(|n| n.id == selected_node_id)
+    let selected = nodes
+        .iter()
+        .find(|n| n.id == selected_node_id)
         .ok_or("Selected node not found")?;
 
     let settings = load_app_settings().unwrap_or_else(|_| default_app_settings());
@@ -900,8 +1193,7 @@ pub async fn generate_config(selected_node_id: String) -> Result<String, String>
     let config_str = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    fs::write(&config_path, &config_str)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    fs::write(&config_path, &config_str).map_err(|e| format!("Failed to write config: {}", e))?;
 
     Ok(config_str)
 }
@@ -963,10 +1255,10 @@ fn build_singbox_config(node: &ProxyNode) -> serde_json::Value {
         ],
         "dns": {
             "final": "google",
-            "strategy": "ipv4_only",
             "servers": default_dns_servers()
         },
         "route": {
+            "default_domain_resolver": "local",
             "rules": [{ "geosite": ["cn"], "geoip": ["cn", "private"], "outbound": "direct" }],
             "final": "proxy"
         }
@@ -994,150 +1286,286 @@ fn build_outbound(node: &ProxyNode) -> serde_json::Value {
 
 /// Parse a sing-box config into a structured overview
 fn parse_config_overview(file_path: &str, config: &serde_json::Value) -> ConfigOverview {
-    let inbounds = config.get("inbounds")
+    let inbounds = config
+        .get("inbounds")
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().map(|inbound| {
-                let inbound_type = inbound.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                let tag = inbound.get("tag").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let listen = inbound.get("listen").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let port = inbound.get("listen_port").and_then(|v| v.as_u64()).unwrap_or(0);
+            arr.iter()
+                .map(|inbound| {
+                    let inbound_type = inbound
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let tag = inbound
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let listen = inbound
+                        .get("listen")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let port = inbound
+                        .get("listen_port")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
 
-                let details = match inbound_type.as_str() {
-                    "tun" => {
-                        let iface = inbound.get("interface_name").and_then(|v| v.as_str()).unwrap_or("");
-                        let stack = inbound.get("stack").and_then(|v| v.as_str()).unwrap_or("");
-                        let mtu = inbound.get("mtu").and_then(|v| v.as_u64()).unwrap_or(0);
-                        format!("TUN interface: {}, stack: {}, MTU: {}", iface, stack, mtu)
-                    },
-                    "mixed" => format!("{}:{}", listen, port),
-                    _ => format!("{}:{}", listen, port),
-                };
+                    let details = match inbound_type.as_str() {
+                        "tun" => {
+                            let iface = inbound
+                                .get("interface_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let stack = inbound.get("stack").and_then(|v| v.as_str()).unwrap_or("");
+                            let mtu = inbound.get("mtu").and_then(|v| v.as_u64()).unwrap_or(0);
+                            format!("TUN interface: {}, stack: {}, MTU: {}", iface, stack, mtu)
+                        }
+                        "mixed" => format!("{}:{}", listen, port),
+                        _ => format!("{}:{}", listen, port),
+                    };
 
-                InboundInfo { inbound_type, tag, listen, details }
-            }).collect()
+                    InboundInfo {
+                        inbound_type,
+                        tag,
+                        listen,
+                        details,
+                    }
+                })
+                .collect()
         })
         .unwrap_or_default();
 
-    let outbounds = config.get("outbounds")
+    let outbounds = config
+        .get("outbounds")
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().map(|outbound| {
-                let outbound_type = outbound.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                let tag = outbound.get("tag").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let server = outbound.get("server").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let port = outbound.get("server_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            arr.iter()
+                .map(|outbound| {
+                    let outbound_type = outbound
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let tag = outbound
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let server = outbound
+                        .get("server")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let port = outbound
+                        .get("server_port")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u16;
 
-                let is_group = matches!(outbound_type.as_str(), "selector" | "urltest");
-                let group_members = if is_group {
-                    outbound.get("outbounds")
-                        .and_then(|v| v.as_array())
-                        .map(|members| members.iter().filter_map(|m| m.as_str().map(String::from)).collect())
-                        .unwrap_or_default()
-                } else {
-                    vec![]
-                };
+                    let is_group = matches!(outbound_type.as_str(), "selector" | "urltest");
+                    let group_members = if is_group {
+                        outbound
+                            .get("outbounds")
+                            .and_then(|v| v.as_array())
+                            .map(|members| {
+                                members
+                                    .iter()
+                                    .filter_map(|m| m.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
 
-                let details = match outbound_type.as_str() {
-                    "vless" => {
-                        let flow = outbound.get("flow").and_then(|v| v.as_str()).unwrap_or("");
-                        let tls_sni = outbound.get("tls")
-                            .and_then(|t| t.get("server_name"))
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        let reality = outbound.get("tls")
-                            .and_then(|t| t.get("reality"))
-                            .and_then(|r| r.get("enabled"))
-                            .and_then(|v| v.as_bool()).unwrap_or(false);
-                        let transport = outbound.get("transport")
-                            .and_then(|t| t.get("type"))
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        let mut desc = "VLESS".to_string();
-                        if reality { desc.push_str(" + Reality"); }
-                        if !flow.is_empty() { desc.push_str(&format!(" ({})", flow)); }
-                        if !transport.is_empty() { desc.push_str(&format!(" + {}", transport.to_uppercase())); }
-                        if !tls_sni.is_empty() { desc.push_str(&format!(" [SNI: {}]", tls_sni)); }
-                        desc
-                    },
-                    "shadowsocks" => {
-                        let method = outbound.get("method").and_then(|v| v.as_str()).unwrap_or("");
-                        format!("Shadowsocks ({})", method)
-                    },
-                    "trojan" => "Trojan".to_string(),
-                    "vmess" => {
-                        let security = outbound.get("security").and_then(|v| v.as_str()).unwrap_or("auto");
-                        format!("VMess ({})", security)
-                    },
-                    "selector" => {
-                        let default = outbound.get("default").and_then(|v| v.as_str()).unwrap_or("");
-                        format!("Selector [default: {}]", default)
-                    },
-                    "urltest" => {
-                        let interval = outbound.get("interval").and_then(|v| v.as_str()).unwrap_or("");
-                        let tolerance = outbound.get("tolerance").and_then(|v| v.as_u64()).unwrap_or(0);
-                        format!("Auto Test [interval: {}, tolerance: {}ms]", interval, tolerance)
-                    },
-                    "direct" => "Direct".to_string(),
-                    "block" => "Block".to_string(),
-                    _ => outbound_type.clone(),
-                };
+                    let details = match outbound_type.as_str() {
+                        "vless" => {
+                            let flow = outbound.get("flow").and_then(|v| v.as_str()).unwrap_or("");
+                            let tls_sni = outbound
+                                .get("tls")
+                                .and_then(|t| t.get("server_name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let reality = outbound
+                                .get("tls")
+                                .and_then(|t| t.get("reality"))
+                                .and_then(|r| r.get("enabled"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let transport = outbound
+                                .get("transport")
+                                .and_then(|t| t.get("type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let mut desc = "VLESS".to_string();
+                            if reality {
+                                desc.push_str(" + Reality");
+                            }
+                            if !flow.is_empty() {
+                                desc.push_str(&format!(" ({})", flow));
+                            }
+                            if !transport.is_empty() {
+                                desc.push_str(&format!(" + {}", transport.to_uppercase()));
+                            }
+                            if !tls_sni.is_empty() {
+                                desc.push_str(&format!(" [SNI: {}]", tls_sni));
+                            }
+                            desc
+                        }
+                        "shadowsocks" => {
+                            let method = outbound
+                                .get("method")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            format!("Shadowsocks ({})", method)
+                        }
+                        "trojan" => "Trojan".to_string(),
+                        "vmess" => {
+                            let security = outbound
+                                .get("security")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("auto");
+                            format!("VMess ({})", security)
+                        }
+                        "selector" => {
+                            let default = outbound
+                                .get("default")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            format!("Selector [default: {}]", default)
+                        }
+                        "urltest" => {
+                            let interval = outbound
+                                .get("interval")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let tolerance = outbound
+                                .get("tolerance")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            format!(
+                                "Auto Test [interval: {}, tolerance: {}ms]",
+                                interval, tolerance
+                            )
+                        }
+                        "direct" => "Direct".to_string(),
+                        "block" => "Block".to_string(),
+                        _ => outbound_type.clone(),
+                    };
 
-                OutboundInfo { outbound_type, tag, server, port, details, is_group, group_members }
-            }).collect()
+                    OutboundInfo {
+                        outbound_type,
+                        tag,
+                        server,
+                        port,
+                        details,
+                        is_group,
+                        group_members,
+                    }
+                })
+                .collect()
         })
         .unwrap_or_default();
 
-    let dns_servers = config.get("dns")
+    let dns_servers = config
+        .get("dns")
         .and_then(|d| d.get("servers"))
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().map(|srv| {
-                DnsServerInfo {
-                    tag: srv.get("tag").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    dns_type: srv.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    server: srv.get("server").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                }
-            }).collect()
+            arr.iter()
+                .map(|srv| DnsServerInfo {
+                    tag: srv
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    dns_type: srv
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    server: srv
+                        .get("server")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
         })
         .unwrap_or_default();
 
-    let route_rules_count = config.get("route")
+    let route_rules_count = config
+        .get("route")
         .and_then(|r| r.get("rules"))
         .and_then(|v| v.as_array())
         .map(|arr| arr.len())
         .unwrap_or(0);
 
-    let route_rules = config.get("route")
+    let route_rules = config
+        .get("route")
         .and_then(|r| r.get("rules"))
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().map(|rule| {
-                let rule_type = rule.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let action = rule.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let outbound = rule.get("outbound").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let summary = summarize_route_rule(rule);
-                RouteRuleInfo {
-                    summary,
-                    rule_type,
-                    action,
-                    outbound,
-                    raw: rule.clone(),
-                }
-            }).collect()
+            arr.iter()
+                .map(|rule| {
+                    let rule_type = rule
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let action = rule
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let outbound = rule
+                        .get("outbound")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let summary = summarize_route_rule(rule);
+                    RouteRuleInfo {
+                        summary,
+                        rule_type,
+                        action,
+                        outbound,
+                        raw: rule.clone(),
+                    }
+                })
+                .collect()
         })
         .unwrap_or_default();
 
-    let rule_sets = config.get("route")
+    let rule_sets = config
+        .get("route")
         .and_then(|r| r.get("rule_set"))
         .and_then(|v| v.as_array())
         .map(|arr| {
-            arr.iter().map(|rs| {
-                RuleSetInfo {
-                    tag: rs.get("tag").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    rule_type: rs.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    format: rs.get("format").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    url: rs.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                }
-            }).collect()
+            arr.iter()
+                .map(|rs| RuleSetInfo {
+                    tag: rs
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    rule_type: rs
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    format: rs
+                        .get("format")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    url: rs
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
         })
         .unwrap_or_default();
 
@@ -1172,11 +1600,14 @@ fn summarize_route_rule(rule: &serde_json::Value) -> String {
     for (field, label) in order {
         if let Some(value) = rule.get(field) {
             if let Some(array) = value.as_array() {
-                let items: Vec<String> = array.iter().filter_map(|item| {
-                    item.as_str().map(String::from).or_else(|| {
-                        item.as_u64().map(|n| n.to_string())
+                let items: Vec<String> = array
+                    .iter()
+                    .filter_map(|item| {
+                        item.as_str()
+                            .map(String::from)
+                            .or_else(|| item.as_u64().map(|n| n.to_string()))
                     })
-                }).collect();
+                    .collect();
                 if !items.is_empty() {
                     let joined = items.into_iter().take(3).collect::<Vec<_>>().join(", ");
                     parts.push(format!("{}: {}", label, joined));
@@ -1224,15 +1655,17 @@ fn get_active_config_profile_file_path() -> std::path::PathBuf {
 }
 
 fn get_nodes_file_path() -> String {
-    get_config_dir().join("nodes.json").to_string_lossy().to_string()
+    get_config_dir()
+        .join("nodes.json")
+        .to_string_lossy()
+        .to_string()
 }
 
 fn save_nodes(nodes: &[ProxyNode]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(nodes)
         .map_err(|e| format!("Failed to serialize nodes: {}", e))?;
     let path = get_nodes_file_path();
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to save nodes: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save nodes: {}", e))?;
     Ok(())
 }
 
@@ -1240,8 +1673,7 @@ fn save_profiles(profiles: &[Profile]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(profiles)
         .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
     let path = get_config_dir().join("profiles.json");
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to save profiles: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save profiles: {}", e))?;
     Ok(())
 }
 
@@ -1251,18 +1683,16 @@ fn load_config_profiles() -> Result<Vec<ConfigProfile>, String> {
         return Ok(vec![]);
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read config profiles: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config profiles: {}", e))
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read config profiles: {}", e))?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse config profiles: {}", e))
 }
 
 fn save_config_profiles(profiles: &[ConfigProfile]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(profiles)
         .map_err(|e| format!("Failed to serialize config profiles: {}", e))?;
     let path = get_config_profiles_file_path();
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to save config profiles: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save config profiles: {}", e))?;
     Ok(())
 }
 
@@ -1279,8 +1709,7 @@ fn load_active_config_profile_id() -> Result<String, String> {
 
 fn save_active_config_profile_id(profile_id: &str) -> Result<(), String> {
     let path = get_active_config_profile_file_path();
-    fs::write(&path, profile_id)
-        .map_err(|e| format!("Failed to save active profile id: {}", e))?;
+    fs::write(&path, profile_id).map_err(|e| format!("Failed to save active profile id: {}", e))?;
     Ok(())
 }
 
@@ -1297,7 +1726,10 @@ fn persist_active_profile_config(config: &serde_json::Value) -> Result<(), Strin
         .map_err(|e| format!("Failed to persist active profile config: {}", e))?;
 
     let mut profiles = load_config_profiles()?;
-    if let Some(profile) = profiles.iter_mut().find(|profile| profile.id == active_profile_id) {
+    if let Some(profile) = profiles
+        .iter_mut()
+        .find(|profile| profile.id == active_profile_id)
+    {
         profile.updated_at = current_unix_timestamp();
         save_config_profiles(&profiles)?;
     }
@@ -1305,7 +1737,10 @@ fn persist_active_profile_config(config: &serde_json::Value) -> Result<(), Strin
     Ok(())
 }
 
-fn save_imported_config_profile(source_path: &str, config: &serde_json::Value) -> Result<ConfigProfile, String> {
+fn save_imported_config_profile(
+    source_path: &str,
+    config: &serde_json::Value,
+) -> Result<ConfigProfile, String> {
     let mut profiles = load_config_profiles()?;
     let id = Uuid::new_v4().to_string();
     let now = current_unix_timestamp();
@@ -1339,7 +1774,8 @@ fn save_imported_config_profile(source_path: &str, config: &serde_json::Value) -
 
 fn activate_config_profile_internal(profile_id: &str) -> Result<ImportResult, String> {
     let profiles = load_config_profiles()?;
-    let profile = profiles.iter()
+    let profile = profiles
+        .iter()
         .find(|profile| profile.id == profile_id)
         .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
 
@@ -1377,8 +1813,7 @@ fn clear_runtime_config_files() -> Result<(), String> {
     for file_name in ["config.json", "nodes.json", "profiles.json"] {
         let path = config_dir.join(file_name);
         if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| format!("Failed to remove {}: {}", file_name, e))?;
+            fs::remove_file(&path).map_err(|e| format!("Failed to remove {}: {}", file_name, e))?;
         }
     }
     Ok(())
@@ -1397,18 +1832,19 @@ fn load_app_settings() -> Result<AppSettings, String> {
         return Err("Settings file not found".to_string());
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read settings: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings: {}", e))
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read settings: {}", e))?;
+    let mut settings: AppSettings =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?;
+    normalize_app_settings(&mut settings);
+    Ok(settings)
 }
 
 fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
     let content = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
     let path = get_settings_file_path();
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to save settings: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Failed to save settings: {}", e))?;
     Ok(())
 }
 
@@ -1416,63 +1852,125 @@ fn infer_settings_from_config(config: &serde_json::Value) -> AppSettings {
     let mut settings = default_app_settings();
 
     if let Some(inbounds) = config.get("inbounds").and_then(|v| v.as_array()) {
-        if let Some(mixed) = inbounds.iter().find(|ib| {
-            ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed"
-        }) {
-            settings.mixed_listen = mixed.get("listen")
+        if let Some(mixed) = inbounds
+            .iter()
+            .find(|ib| ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed")
+        {
+            settings.mixed_listen = mixed
+                .get("listen")
                 .and_then(|v| v.as_str())
                 .unwrap_or("127.0.0.1")
                 .to_string();
-            settings.mixed_port = mixed.get("listen_port")
+            settings.mixed_port = mixed
+                .get("listen_port")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(7890) as u16;
         }
 
-        if let Some(tun) = inbounds.iter().find(|ib| {
-            ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "tun"
-        }) {
+        if let Some(tun) = inbounds
+            .iter()
+            .find(|ib| ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "tun")
+        {
             settings.tun_enabled = true;
-            settings.tun_interface_name = tun.get("interface_name")
+            settings.tun_interface_name = tun
+                .get("interface_name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("singbox")
                 .to_string();
             settings.tun_mtu = tun.get("mtu").and_then(|v| v.as_u64()).unwrap_or(9000);
-            settings.tun_stack = tun.get("stack")
+            settings.tun_stack = tun
+                .get("stack")
                 .and_then(|v| v.as_str())
                 .unwrap_or("mixed")
                 .to_string();
-            settings.tun_auto_route = tun.get("auto_route").and_then(|v| v.as_bool()).unwrap_or(true);
-            settings.tun_strict_route = tun.get("strict_route").and_then(|v| v.as_bool()).unwrap_or(true);
-            settings.tun_sniff = tun.get("sniff").and_then(|v| v.as_bool()).unwrap_or(true);
-            settings.tun_sniff_override_destination = tun.get("sniff_override_destination")
+            settings.tun_auto_route = tun
+                .get("auto_route")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            settings.tun_address = tun.get("address")
+            settings.tun_strict_route = tun
+                .get("strict_route")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            settings.tun_sniff = tun.get("sniff").and_then(|v| v.as_bool()).unwrap_or(true);
+            settings.tun_sniff_override_destination = tun
+                .get("sniff_override_destination")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            settings.tun_address = tun
+                .get("address")
                 .and_then(|v| v.as_array())
-                .map(|items| items.iter().filter_map(|item| item.as_str().map(String::from)).collect())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_else(|| vec!["172.19.0.1/30".to_string()]);
         }
     }
 
     if let Some(dns) = config.get("dns") {
-        settings.dns_final = dns.get("final")
+        settings.dns_final = dns
+            .get("final")
             .and_then(|v| v.as_str())
             .unwrap_or("google")
             .to_string();
-        settings.dns_strategy = dns.get("strategy")
+        settings.dns_strategy = dns
+            .get("strategy")
             .and_then(|v| v.as_str())
-            .unwrap_or("ipv4_only")
+            .unwrap_or("auto")
             .to_string();
-        settings.dns_servers = dns.get("servers")
+        settings.dns_servers = dns
+            .get("servers")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_else(default_dns_servers);
     }
 
+    normalize_app_settings(&mut settings);
     settings
 }
 
-fn apply_app_settings_to_config(mut config: serde_json::Value, settings: &AppSettings) -> serde_json::Value {
+fn normalize_app_settings(settings: &mut AppSettings) {
+    if is_auto_dns_strategy(&settings.dns_strategy) {
+        settings.dns_strategy = "auto".to_string();
+    }
+    normalize_dns_server_detours(&mut settings.dns_servers);
+}
+
+fn is_auto_dns_strategy(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+    normalized.is_empty()
+        || normalized == "auto"
+        || normalized == "ipv4_only"
+        || normalized == "ipv4only"
+        || normalized == "ip4_only"
+        || normalized == "ip4only"
+}
+
+fn normalize_dns_server_detours(servers: &mut [serde_json::Value]) {
+    for server in servers {
+        if let Some(obj) = server.as_object_mut() {
+            let tag = obj
+                .get("tag")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if tag == "local" {
+                obj.insert(
+                    "detour".to_string(),
+                    serde_json::Value::String("direct".to_string()),
+                );
+            } else {
+                obj.remove("detour");
+            }
+        }
+    }
+}
+
+fn apply_app_settings_to_config(
+    mut config: serde_json::Value,
+    settings: &AppSettings,
+) -> serde_json::Value {
     if !config.is_object() {
         config = serde_json::json!({});
     }
@@ -1482,13 +1980,23 @@ fn apply_app_settings_to_config(mut config: serde_json::Value, settings: &AppSet
     }
 
     if let Some(inbounds) = config.get_mut("inbounds").and_then(|v| v.as_array_mut()) {
-        if let Some(mixed) = inbounds.iter_mut().find(|ib| {
-            ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed"
-        }) {
+        if let Some(mixed) = inbounds
+            .iter_mut()
+            .find(|ib| ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "mixed")
+        {
             if let Some(obj) = mixed.as_object_mut() {
-                obj.insert("tag".to_string(), serde_json::Value::String("mixed-in".to_string()));
-                obj.insert("listen".to_string(), serde_json::Value::String(settings.mixed_listen.clone()));
-                obj.insert("listen_port".to_string(), serde_json::Value::Number(settings.mixed_port.into()));
+                obj.insert(
+                    "tag".to_string(),
+                    serde_json::Value::String("mixed-in".to_string()),
+                );
+                obj.insert(
+                    "listen".to_string(),
+                    serde_json::Value::String(settings.mixed_listen.clone()),
+                );
+                obj.insert(
+                    "listen_port".to_string(),
+                    serde_json::Value::Number(settings.mixed_port.into()),
+                );
             }
         } else {
             inbounds.push(serde_json::json!({
@@ -1505,9 +2013,10 @@ fn apply_app_settings_to_config(mut config: serde_json::Value, settings: &AppSet
         });
 
         if settings.tun_enabled {
-            if let Some(tun) = inbounds.iter_mut().find(|ib| {
-                ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "tun"
-            }) {
+            if let Some(tun) = inbounds
+                .iter_mut()
+                .find(|ib| ib.get("type").and_then(|v| v.as_str()).unwrap_or("") == "tun")
+            {
                 *tun = serde_json::json!({
                     "type": "tun",
                     "tag": "tun-in",
@@ -1521,18 +2030,21 @@ fn apply_app_settings_to_config(mut config: serde_json::Value, settings: &AppSet
                     "address": settings.tun_address.clone()
                 });
             } else {
-                inbounds.insert(0, serde_json::json!({
-                    "type": "tun",
-                    "tag": "tun-in",
-                    "interface_name": settings.tun_interface_name.clone(),
-                    "mtu": settings.tun_mtu,
-                    "stack": settings.tun_stack.clone(),
-                    "auto_route": settings.tun_auto_route,
-                    "strict_route": settings.tun_strict_route,
-                    "sniff": settings.tun_sniff,
-                    "sniff_override_destination": settings.tun_sniff_override_destination,
-                    "address": settings.tun_address.clone()
-                }));
+                inbounds.insert(
+                    0,
+                    serde_json::json!({
+                        "type": "tun",
+                        "tag": "tun-in",
+                        "interface_name": settings.tun_interface_name.clone(),
+                        "mtu": settings.tun_mtu,
+                        "stack": settings.tun_stack.clone(),
+                        "auto_route": settings.tun_auto_route,
+                        "strict_route": settings.tun_strict_route,
+                        "sniff": settings.tun_sniff,
+                        "sniff_override_destination": settings.tun_sniff_override_destination,
+                        "address": settings.tun_address.clone()
+                    }),
+                );
             }
         }
     }
@@ -1542,10 +2054,31 @@ fn apply_app_settings_to_config(mut config: serde_json::Value, settings: &AppSet
     }
 
     if let Some(dns) = config.get_mut("dns").and_then(|v| v.as_object_mut()) {
-        dns.insert("final".to_string(), serde_json::Value::String(settings.dns_final.clone()));
-        dns.insert("strategy".to_string(), serde_json::Value::String(settings.dns_strategy.clone()));
-        dns.insert("servers".to_string(), serde_json::Value::Array(settings.dns_servers.clone()));
+        dns.insert(
+            "final".to_string(),
+            serde_json::Value::String(settings.dns_final.clone()),
+        );
+        if is_auto_dns_strategy(&settings.dns_strategy) {
+            dns.remove("strategy");
+        } else {
+            dns.insert(
+                "strategy".to_string(),
+                serde_json::Value::String(settings.dns_strategy.clone()),
+            );
+        }
+        dns.insert(
+            "servers".to_string(),
+            serde_json::Value::Array(settings.dns_servers.clone()),
+        );
     }
+
+    if let Some(dns) = config.get_mut("dns") {
+        sanitize_dns_rules(dns);
+        sanitize_dns_servers(dns);
+        sanitize_dns_strategy(dns);
+    }
+
+    ensure_default_domain_resolver(&mut config);
 
     config
 }
@@ -1607,11 +2140,17 @@ fn hidden_command(program: &str) -> Command {
 /// Sanitize config for sing-box 1.12.0 compatibility:
 /// - Remove DNS servers with type "block" (unsupported)
 /// - Move per-server "strategy" to DNS top-level
+/// - Migrate legacy "ssl" blocks to "tls"
+/// - Normalize legacy TUN address fields into sing-box 1.12 arrays
 /// - Remove "sniff_override_destination" from route rule sniff actions
 /// - Ensure a "mixed" inbound exists on port 7890 for system proxy fallback
 fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value {
     // Fix DNS section
     if let Some(dns) = config.get_mut("dns") {
+        sanitize_dns_rules(dns);
+        sanitize_dns_servers(dns);
+        sanitize_dns_strategy(dns);
+
         // Remove "block" type DNS servers and per-server "strategy"
         if let Some(servers) = dns.get_mut("servers").and_then(|s| s.as_array_mut()) {
             // Collect strategy from servers before removing
@@ -1626,9 +2165,7 @@ fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value
                 }
             }
             // Remove block type servers
-            servers.retain(|s| {
-                s.get("type").and_then(|t| t.as_str()).unwrap_or("") != "block"
-            });
+            servers.retain(|s| s.get("type").and_then(|t| t.as_str()).unwrap_or("") != "block");
             // Add strategy to DNS top-level if not already present
             if let Some(strategy) = found_strategy {
                 if let Some(dns_obj) = dns.as_object_mut() {
@@ -1636,14 +2173,19 @@ fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value
                 }
             }
         }
+
+        sanitize_dns_strategy(dns);
     }
+
+    ensure_default_domain_resolver(&mut config);
 
     // Fix route rules: remove sniff_override_destination from sniff actions
     if let Some(route) = config.get_mut("route") {
         if let Some(rules) = route.get_mut("rules").and_then(|r| r.as_array_mut()) {
             for rule in rules.iter_mut() {
                 if let Some(obj) = rule.as_object_mut() {
-                    let is_sniff = obj.get("action")
+                    let is_sniff = obj
+                        .get("action")
                         .and_then(|a| a.as_str())
                         .map(|a| a == "sniff")
                         .unwrap_or(false);
@@ -1655,15 +2197,49 @@ fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value
         }
     }
 
+    if let Some(outbounds) = config.get_mut("outbounds").and_then(|o| o.as_array_mut()) {
+        for outbound in outbounds.iter_mut() {
+            migrate_ssl_to_tls(outbound);
+        }
+    }
+
+    if let Some(inbounds) = config.get_mut("inbounds").and_then(|i| i.as_array_mut()) {
+        for inbound in inbounds.iter_mut() {
+            migrate_ssl_to_tls(inbound);
+
+            if let Some(obj) = inbound.as_object_mut() {
+                let is_tun = obj
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value == "tun")
+                    .unwrap_or(false);
+
+                if is_tun {
+                    merge_legacy_string_fields(obj, "address", &["inet4_address", "inet6_address"]);
+                    merge_legacy_string_fields(
+                        obj,
+                        "route_address",
+                        &["inet4_route_address", "inet6_route_address"],
+                    );
+                    merge_legacy_string_fields(
+                        obj,
+                        "route_exclude_address",
+                        &["inet4_route_exclude_address", "inet6_route_exclude_address"],
+                    );
+                }
+            }
+        }
+    }
+
     // Ensure a "mixed" inbound (HTTP+SOCKS5) exists on port 7890 for system proxy
     if config.get("inbounds").and_then(|v| v.as_array()).is_none() {
         config["inbounds"] = serde_json::json!([]);
     }
 
     if let Some(inbounds) = config.get_mut("inbounds").and_then(|i| i.as_array_mut()) {
-        let has_mixed = inbounds.iter().any(|ib| {
-            ib.get("type").and_then(|t| t.as_str()).unwrap_or("") == "mixed"
-        });
+        let has_mixed = inbounds
+            .iter()
+            .any(|ib| ib.get("type").and_then(|t| t.as_str()).unwrap_or("") == "mixed");
         if !has_mixed {
             inbounds.push(serde_json::json!({
                 "type": "mixed",
@@ -1675,4 +2251,181 @@ fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value
     }
 
     config
+}
+
+fn sanitize_dns_rules(dns: &mut serde_json::Value) {
+    let Some(rules) = dns.get_mut("rules").and_then(|value| value.as_array_mut()) else {
+        return;
+    };
+
+    rules.retain(|rule| {
+        let routes_any_outbound = rule_routes_any_outbound(rule);
+        let routes_local_server =
+            rule.get("server").and_then(|value| value.as_str()) == Some("local");
+        !(routes_any_outbound && routes_local_server)
+    });
+}
+
+fn rule_routes_any_outbound(rule: &serde_json::Value) -> bool {
+    if rule.get("outbound").and_then(|value| value.as_str()) == Some("any") {
+        return true;
+    }
+
+    rule.get("outbound")
+        .and_then(|value| value.as_array())
+        .map(|items| items.iter().any(|item| item.as_str() == Some("any")))
+        .unwrap_or(false)
+}
+
+fn sanitize_dns_servers(dns: &mut serde_json::Value) {
+    let Some(servers) = dns
+        .get_mut("servers")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return;
+    };
+
+    for server in servers {
+        let Some(obj) = server.as_object_mut() else {
+            continue;
+        };
+        let is_google_tls = obj.get("tag").and_then(|value| value.as_str()) == Some("google")
+            && obj.get("address").and_then(|value| value.as_str()) == Some("tls://8.8.8.8");
+        let is_ali_doh = obj.get("tag").and_then(|value| value.as_str()) == Some("local")
+            && obj.get("address").and_then(|value| value.as_str())
+                == Some("https://223.5.5.5/dns-query");
+        let is_local = obj.get("tag").and_then(|value| value.as_str()) == Some("local");
+
+        if is_google_tls {
+            obj.insert(
+                "address".to_string(),
+                serde_json::Value::String("tcp://8.8.8.8".to_string()),
+            );
+        }
+
+        if is_ali_doh {
+            obj.insert(
+                "address".to_string(),
+                serde_json::Value::String("223.5.5.5".to_string()),
+            );
+        }
+
+        if is_local {
+            obj.insert(
+                "detour".to_string(),
+                serde_json::Value::String("direct".to_string()),
+            );
+        }
+    }
+}
+
+fn sanitize_dns_strategy(dns: &mut serde_json::Value) {
+    let Some(obj) = dns.as_object_mut() else {
+        return;
+    };
+
+    let is_auto = obj
+        .get("strategy")
+        .and_then(|value| value.as_str())
+        .map(|value| {
+            let strategy = value.trim();
+            is_auto_dns_strategy(strategy)
+        })
+        .unwrap_or(false);
+
+    if is_auto {
+        obj.remove("strategy");
+    }
+}
+
+fn ensure_default_domain_resolver(config: &mut serde_json::Value) {
+    let has_local_dns = config
+        .get("dns")
+        .and_then(|dns| dns.get("servers"))
+        .and_then(|servers| servers.as_array())
+        .map(|servers| {
+            servers
+                .iter()
+                .any(|server| server.get("tag").and_then(|value| value.as_str()) == Some("local"))
+        })
+        .unwrap_or(false);
+
+    if !has_local_dns {
+        return;
+    }
+
+    if config
+        .get("route")
+        .and_then(|value| value.as_object())
+        .is_none()
+    {
+        config["route"] = serde_json::json!({});
+    }
+
+    if let Some(route) = config
+        .get_mut("route")
+        .and_then(|value| value.as_object_mut())
+    {
+        route.insert(
+            "default_domain_resolver".to_string(),
+            serde_json::Value::String("local".to_string()),
+        );
+    }
+}
+
+fn migrate_ssl_to_tls(value: &mut serde_json::Value) {
+    if let Some(obj) = value.as_object_mut() {
+        if !obj.contains_key("tls") {
+            if let Some(ssl) = obj.remove("ssl") {
+                obj.insert("tls".to_string(), ssl);
+            }
+        }
+    }
+}
+
+fn merge_legacy_string_fields(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    target_key: &str,
+    legacy_keys: &[&str],
+) {
+    let mut merged = match obj.remove(target_key) {
+        Some(serde_json::Value::Array(items)) => items,
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {
+            vec![serde_json::Value::String(value)]
+        }
+        _ => Vec::new(),
+    };
+
+    for legacy_key in legacy_keys {
+        if let Some(value) = obj.remove(*legacy_key) {
+            match value {
+                serde_json::Value::String(text) if !text.trim().is_empty() => {
+                    push_unique_string(&mut merged, text);
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        if let Some(text) = item.as_str() {
+                            if !text.trim().is_empty() {
+                                push_unique_string(&mut merged, text.to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if !merged.is_empty() {
+        obj.insert(target_key.to_string(), serde_json::Value::Array(merged));
+    }
+}
+
+fn push_unique_string(items: &mut Vec<serde_json::Value>, value: String) {
+    let exists = items
+        .iter()
+        .any(|item| item.as_str() == Some(value.as_str()));
+    if !exists {
+        items.push(serde_json::Value::String(value));
+    }
 }

@@ -52,6 +52,36 @@ npm run tauri dev
 npm run tauri build
 ```
 
+## Portable Distribution
+
+If you do not want to ship an installer, you can ship a portable zip plus a PowerShell install script.
+
+1. Build the desktop app:
+
+```bash
+npm run tauri build
+```
+
+2. Package the portable bundle:
+
+```bash
+npm run package:portable
+```
+
+3. Distribute the generated zip:
+
+```text
+src-tauri/target/release/bundle/portable/SingBox-Client_0.1.0_x64-portable.zip
+```
+
+4. On the target machine, unzip it and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+This installs the app into `%LOCALAPPDATA%\Programs\SingBox Client`, copies the bundled `bin/` runtime files, creates shortcuts, and launches the client. A separate sing-box installation is not required.
+
 ## Usage
 
 1. Launch the application.
@@ -149,8 +179,12 @@ The client automatically normalizes some older config details for sing-box `1.12
 
 - Moves per-server `strategy` into the DNS top-level when needed
 - Removes deprecated DNS servers with `type: "block"`
+- Migrates legacy `ssl` blocks to `tls` when `tls` is missing
+- Merges legacy TUN `inet4_*` and `inet6_*` address fields into the current array-based fields
 - Removes `sniff_override_destination` from route rule sniff actions when required
 - Adds a local `mixed` inbound on port `7890` if not present
+
+The client also injects the required `ENABLE_DEPRECATED_*` compatibility environment variables only into the spawned `sing-box` process. Users do not need to configure system-wide environment variables manually.
 
 ## Current Limitations
 

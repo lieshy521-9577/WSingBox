@@ -1,6 +1,6 @@
 import { AlertCircle, Loader2, Power } from "lucide-react";
 import { ProxyNode } from "../types";
-import { Profile } from "../hooks/useSingbox";
+import { Profile, RuntimeDebugSnapshot } from "../hooks/useSingbox";
 
 interface ProxyControlProps {
   isRunning: boolean;
@@ -9,6 +9,7 @@ interface ProxyControlProps {
   selectedOutboundTag: string | null;
   nodes: ProxyNode[];
   profiles: Profile[];
+  runtimeDebug: RuntimeDebugSnapshot | null;
   hasConfig: boolean;
   tunEnabled: boolean;
   onToggle: () => void;
@@ -23,6 +24,7 @@ function ProxyControl({
   selectedOutboundTag,
   nodes,
   profiles,
+  runtimeDebug,
   hasConfig,
   tunEnabled,
   onToggle,
@@ -115,6 +117,12 @@ function ProxyControl({
             <div className="flex flex-wrap gap-2 pt-1">
               <ControlPill label="Target" value={targetSummary} />
               <ControlPill label="Switch" value={loading ? "Updating" : "Ready"} />
+              {runtimeDebug?.top_selector_default && (
+                <ControlPill label="Selector Default" value={runtimeDebug.top_selector_default} />
+              )}
+              {runtimeDebug?.active_leaf_outbound && (
+                <ControlPill label="Leaf Node" value={runtimeDebug.active_leaf_outbound} />
+              )}
             </div>
           </div>
         </div>
@@ -137,6 +145,11 @@ function ProxyControl({
           {selectedProfile && resolvedGroupNode && (
             <span className="status-pill bg-sky-500/12 text-sky-700 dark:text-sky-300">
               Current Node: {resolvedGroupNode.name}
+            </span>
+          )}
+          {runtimeDebug?.route_final && (
+            <span className="status-pill bg-amber-500/12 text-amber-700 dark:text-amber-300">
+              Route Final: {runtimeDebug.route_final}
             </span>
           )}
         </div>

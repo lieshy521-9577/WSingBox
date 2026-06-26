@@ -11,6 +11,13 @@ export interface Profile {
   tolerance: number;
 }
 
+export interface RuntimeDebugSnapshot {
+  route_final: string;
+  top_selector_tag: string;
+  top_selector_default: string;
+  active_leaf_outbound: string;
+}
+
 export function useSingbox() {
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -20,6 +27,7 @@ export function useSingbox() {
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [selectedOutboundTag, setSelectedOutboundTag] = useState<string | null>(null);
   const [hasConfig, setHasConfig] = useState(false);
+  const [runtimeDebug, setRuntimeDebug] = useState<RuntimeDebugSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +47,7 @@ export function useSingbox() {
     checkStatus();
     checkConfig();
     loadActiveOutbound();
+    loadRuntimeDebug();
     loadActiveConfigProfile();
   }, []);
 
@@ -100,6 +109,15 @@ export function useSingbox() {
       setConfigProfiles(result);
     } catch (err) {
       console.error("Failed to load config profiles:", err);
+    }
+  }, []);
+
+  const loadRuntimeDebug = useCallback(async () => {
+    try {
+      const result = await invoke<RuntimeDebugSnapshot>("get_runtime_debug_snapshot");
+      setRuntimeDebug(result);
+    } catch (err) {
+      console.error("Failed to load runtime debug snapshot:", err);
     }
   }, []);
 
@@ -191,12 +209,13 @@ export function useSingbox() {
       await loadProfiles();
       const active = await invoke<string>("get_active_outbound");
       setSelectedOutboundTag(active || null);
+      await loadRuntimeDebug();
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [loadNodes, loadProfiles]);
+  }, [loadNodes, loadProfiles, loadRuntimeDebug]);
 
   const switchConfigProfile = useCallback(async (profileId: string) => {
     try {
@@ -206,6 +225,7 @@ export function useSingbox() {
       await loadNodes();
       await loadProfiles();
       await loadConfigProfiles();
+      await loadRuntimeDebug();
       await loadActiveConfigProfile();
       setHasConfig(true);
       setSelectedOutboundTag(result.active_outbound || null);
@@ -214,7 +234,7 @@ export function useSingbox() {
     } finally {
       setLoading(false);
     }
-  }, [loadActiveConfigProfile, loadConfigProfiles, loadNodes, loadProfiles]);
+  }, [loadActiveConfigProfile, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
 
   const deleteConfigProfile = useCallback(async (profileId: string) => {
     try {
@@ -225,6 +245,7 @@ export function useSingbox() {
       await checkConfig();
       await loadNodes();
       await loadProfiles();
+      await loadRuntimeDebug();
       await loadActiveConfigProfile();
       await loadActiveOutbound();
     } catch (err) {
@@ -232,23 +253,26 @@ export function useSingbox() {
     } finally {
       setLoading(false);
     }
-  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles]);
+  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
 
   const selectOutboundTag = useCallback(async (tag: string) => {
     try {
       setLoading(true);
       setError(null);
-      setSelectedOutboundTag(tag);
       if (hasConfig) {
-        await invoke<string>("set_active_outbound", { targetTag: tag });
+        const actual = await invoke<string>("set_active_outbound", { targetTag: tag });
         await loadProfiles();
+        await loadRuntimeDebug();
+        setSelectedOutboundTag(actual || null);
+      } else {
+        setSelectedOutboundTag(tag);
       }
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [hasConfig, loadProfiles]);
+  }, [hasConfig, loadProfiles, loadRuntimeDebug]);
 
   const startProxy = useCallback(async () => {
     try {
@@ -257,7 +281,10 @@ export function useSingbox() {
 
       if (hasConfig) {
         if (selectedOutboundTag) {
-          await invoke<string>("set_active_outbound", { targetTag: selectedOutboundTag });
+          const actual = await invoke<string>("set_active_outbound", { targetTag: selectedOutboundTag });
+          setSelectedOutboundTag(actual || null);
+          await loadProfiles();
+          await loadRuntimeDebug();
         }
         // Use imported config (includes TUN + mixed inbound)
         // sing-box will be started with admin elevation for TUN
@@ -283,7 +310,7 @@ export function useSingbox() {
     } finally {
       setLoading(false);
     }
-  }, [selectedOutboundTag, hasConfig]);
+  }, [selectedOutboundTag, hasConfig, loadProfiles, loadRuntimeDebug, syncTrayConnectionState]);
 
   const stopProxy = useCallback(async () => {
     try {
@@ -314,11 +341,12 @@ export function useSingbox() {
     await loadConfigProfiles();
     await checkConfig();
     await loadActiveOutbound();
+    await loadRuntimeDebug();
     await loadActiveConfigProfile();
     if (activeOutbound) {
       setSelectedOutboundTag(activeOutbound);
     }
-  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles]);
+  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
 
   return {
     nodes,
@@ -328,6 +356,7 @@ export function useSingbox() {
     isRunning,
     proxyEnabled,
     selectedOutboundTag,
+    runtimeDebug,
     hasConfig,
     loading,
     error,
