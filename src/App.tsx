@@ -259,6 +259,7 @@ function App() {
             isRunning={singbox.isRunning}
             proxyEnabled={singbox.proxyEnabled}
             loading={singbox.loading}
+            switchStatus={singbox.switchStatus}
             selectedOutboundTag={singbox.selectedOutboundTag}
             nodes={singbox.nodes}
             profiles={singbox.profiles}

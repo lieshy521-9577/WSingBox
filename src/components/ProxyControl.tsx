@@ -6,6 +6,7 @@ interface ProxyControlProps {
   isRunning: boolean;
   proxyEnabled: boolean;
   loading: boolean;
+  switchStatus: string | null;
   selectedOutboundTag: string | null;
   nodes: ProxyNode[];
   profiles: Profile[];
@@ -21,6 +22,7 @@ function ProxyControl({
   isRunning,
   proxyEnabled,
   loading,
+  switchStatus,
   selectedOutboundTag,
   nodes,
   profiles,
@@ -34,6 +36,13 @@ function ProxyControl({
   const selectedNode = nodes.find((n) => n.id === selectedOutboundTag);
   const selectedProfile = profiles.find((p) => p.tag === selectedOutboundTag);
   const canStart = hasConfig || !!selectedOutboundTag;
+  const runtimeLeafNode = runtimeDebug?.active_leaf_outbound
+    ? nodes.find((node) => node.id === runtimeDebug.active_leaf_outbound) ?? null
+    : null;
+  const runtimeLeafProfile = runtimeDebug?.active_leaf_outbound
+    ? profiles.find((profile) => profile.tag === runtimeDebug.active_leaf_outbound) ?? null
+    : null;
+  const runtimeSelectedIsProfile = Boolean(runtimeLeafProfile && !runtimeLeafNode);
 
   const resolveActiveNode = (tag: string | null, visited = new Set<string>()): ProxyNode | null => {
     if (!tag || visited.has(tag)) {
@@ -69,7 +78,24 @@ function ProxyControl({
 
   const resolvedGroupNode = selectedNode ? null : resolveActiveNode(selectedOutboundTag);
   const statusLabel = isRunning ? "Traffic Live" : "Standby";
-  const activeLabel = selectedNode?.name ?? resolvedGroupNode?.name ?? selectedProfile?.tag ?? "Not selected";
+  const displayedLeafNode = isRunning
+    ? runtimeSelectedIsProfile
+      ? null
+      : runtimeLeafNode ?? resolvedGroupNode
+    : resolvedGroupNode;
+  const displayedProfile = isRunning ? runtimeLeafProfile ?? selectedProfile : selectedProfile;
+  const activeLabel = selectedNode?.name ?? displayedLeafNode?.name ?? displayedProfile?.tag ?? "Not selected";
+  const summaryText = switchStatus
+    ? switchStatus
+    : selectedNode
+      ? `Active: ${selectedNode.name} (${selectedNode.server}:${selectedNode.port})`
+      : displayedProfile
+        ? displayedLeafNode
+          ? `Active: ${displayedProfile.tag} -> ${displayedLeafNode.name} (${displayedLeafNode.server}:${displayedLeafNode.port})`
+          : `Active Group: ${displayedProfile.tag} (${displayedProfile.profile_type})`
+        : hasConfig
+          ? "Using imported config (auto-select by profile)"
+          : "No node selected";
 
   return (
     <div className="border-b border-border/80 bg-surface/85 px-[clamp(0.875rem,1.6vw,1.25rem)] py-[clamp(0.75rem,1.4vw,1rem)]">
@@ -96,21 +122,13 @@ function ProxyControl({
               </span>
             </div>
             <p className="max-w-3xl text-[clamp(0.8rem,1.2vw,0.875rem)] text-content-secondary">
-              {selectedNode
-                ? `Active: ${selectedNode.name} (${selectedNode.server}:${selectedNode.port})`
-                : selectedProfile
-                  ? resolvedGroupNode
-                    ? `Active: ${selectedProfile.tag} -> ${resolvedGroupNode.name} (${resolvedGroupNode.server}:${resolvedGroupNode.port})`
-                    : `Active Group: ${selectedProfile.tag} (${selectedProfile.profile_type})`
-                : hasConfig
-                  ? "Using imported config (auto-select by profile)"
-                  : "No node selected"}
+              {summaryText}
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
               <ControlPill label="Target" value={activeLabel} />
-              <ControlPill label="Switch" value={loading ? "Updating" : "Ready"} />
-              {!selectedNode && selectedProfile && (
-                <ControlPill label="Group" value={selectedProfile.tag} />
+              <ControlPill label="Switch" value={switchStatus ?? (loading ? "Updating" : "Ready")} />
+              {!selectedNode && displayedProfile && (
+                <ControlPill label="Group" value={displayedProfile.tag} />
               )}
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
@@ -69,14 +69,19 @@ function NodeList({
       return latencyMode;
     }
 
-    return ["hysteria2", "tuic"].includes(nodeType) ? "http" : "connect";
+    return ["shadowsocks", "vmess", "trojan", "vless", "hysteria2", "tuic", "wireguard"].includes(nodeType)
+      ? "http"
+      : "connect";
   };
 
   const testAllLatency = useCallback(async () => {
     setTesting(true);
     try {
-      for (const node of nodes) {
-        if (!node.server || node.port === 0) continue;
+      const testableNodes = nodes.filter((node) => node.server && node.port !== 0);
+      const concurrency = Math.min(4, Math.max(1, testableNodes.length));
+      let cursor = 0;
+
+      const runSingleTest = async (node: ProxyNode) => {
         try {
           const result = await invoke<LatencyResult>("test_node_latency", {
             nodeId: node.id,
@@ -93,7 +98,17 @@ function NodeList({
             [node.id]: { node_id: node.id, latency_ms: -1, status: "error" },
           }));
         }
-      }
+      };
+
+      const workers = Array.from({ length: concurrency }, async () => {
+        while (cursor < testableNodes.length) {
+          const node = testableNodes[cursor];
+          cursor += 1;
+          await runSingleTest(node);
+        }
+      });
+
+      await Promise.all(workers);
     } finally {
       setTesting(false);
     }
@@ -164,6 +179,67 @@ function NodeList({
       </span>
     );
   };
+
+  const resolveActiveNodeFromProfile = useCallback((profileTag: string, visited = new Set<string>()): string | null => {
+    if (visited.has(profileTag)) {
+      return null;
+    }
+
+    const profile = profiles.find((item) => item.tag === profileTag);
+    if (!profile) {
+      return null;
+    }
+
+    visited.add(profileTag);
+
+    if (profile.profile_type === "urltest") {
+      const candidates = resolveMemberNodeTags(profile.outbounds)
+        .map((tag) => latencies[tag])
+        .filter((result): result is LatencyResult => !!result && result.status === "ok");
+
+      if (candidates.length === 0) {
+        return null;
+      }
+
+      return candidates.reduce((best, current) =>
+        current.latency_ms < best.latency_ms ? current : best
+      ).node_id;
+    }
+
+    const nextTargets = [profile.default_outbound, ...profile.outbounds].filter(Boolean);
+    for (const target of nextTargets) {
+      if (nodeMap[target]) {
+        return target;
+      }
+
+      const nested = resolveActiveNodeFromProfile(target, visited);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    return null;
+  }, [latencies, nodeMap, profiles, resolveMemberNodeTags]);
+
+  const activeResolvedNodeId = useMemo(() => {
+    if (activeNode) {
+      return activeNode.id;
+    }
+
+    if (activeGroup) {
+      return resolveActiveNodeFromProfile(activeGroup.tag);
+    }
+
+    return null;
+  }, [activeGroup, activeNode, resolveActiveNodeFromProfile]);
+
+  useEffect(() => {
+    if (testing || nodes.length === 0 || Object.keys(latencies).length > 0) {
+      return;
+    }
+
+    void testAllLatency();
+  }, [latencies, nodes.length, testAllLatency, testing]);
 
   return (
     <div className="space-y-5">
@@ -281,6 +357,11 @@ function NodeList({
                       interval: {profile.interval}
                     </span>
                   )}
+                  {selectedOutboundTag === profile.tag && activeResolvedNodeId && (
+                    <span className="rounded bg-primary-600/15 px-1.5 py-0.5 text-[10px] text-primary-600 dark:text-primary-400">
+                      routed: {nodeMap[activeResolvedNodeId]?.name ?? activeResolvedNodeId}
+                    </span>
+                  )}
                   {renderGroupLatency(profile.outbounds)}
                   {hasConfig && topSelectorTag !== profile.tag && (
                     <button
@@ -378,6 +459,7 @@ function NodeList({
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 2xl:grid-cols-3">
             {nodes.map((node) => {
               const isSelected = node.id === selectedOutboundTag;
+              const isResolvedActive = !isSelected && activeResolvedNodeId === node.id;
               const protocolLabel =
                 PROTOCOL_LABELS[node.node_type as ProtocolType] || node.node_type;
 
@@ -386,12 +468,18 @@ function NodeList({
                   key={node.id}
                   onClick={() => onSelect(node.id)}
                   className={`flex cursor-pointer items-center gap-3 rounded-[20px] border px-3 py-2.5 transition-all ${
-                    isSelected ? "border-primary-500/30 bg-primary-600/10" : "subtle-row"
+                    isSelected
+                      ? "border-primary-500/30 bg-primary-600/10"
+                      : isResolvedActive
+                        ? "border-emerald-500/30 bg-emerald-500/8"
+                        : "subtle-row"
                   }`}
                 >
                   <div className="shrink-0">
                     {isSelected ? (
                       <CheckCircle2 size={18} className="text-primary-500" />
+                    ) : isResolvedActive ? (
+                      <CheckCircle2 size={18} className="text-emerald-500" />
                     ) : (
                       <div className="h-[18px] w-[18px] rounded-full border-2 border-surface-muted" />
                     )}
@@ -401,6 +489,7 @@ function NodeList({
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium text-content">{node.name}</span>
                       {isSelected && <span className="status-chip status-chip-primary">Active</span>}
+                      {isResolvedActive && <span className="status-chip">Routed</span>}
                     </div>
                     <div className="mt-1 flex items-center gap-2">
                       <span className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">

@@ -29,6 +29,7 @@ export function useSingbox() {
   const [hasConfig, setHasConfig] = useState(false);
   const [runtimeDebug, setRuntimeDebug] = useState<RuntimeDebugSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const [switchStatus, setSwitchStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const syncTrayConnectionState = useCallback(async (connected: boolean) => {
@@ -37,6 +38,13 @@ export function useSingbox() {
     } catch (err) {
       console.error("Failed to sync tray connection state:", err);
     }
+  }, []);
+
+  const showTransientSwitchStatus = useCallback((message: string) => {
+    setSwitchStatus(message);
+    window.setTimeout(() => {
+      setSwitchStatus((current) => (current === message ? null : current));
+    }, 1800);
   }, []);
 
   // Load nodes and check status on mount
@@ -221,20 +229,33 @@ export function useSingbox() {
     try {
       setLoading(true);
       setError(null);
+      setSwitchStatus("Applying selected profile...");
       const result = await invoke<{ active_outbound: string }>("switch_config_profile", { profileId });
+      if (isRunning) {
+        setSwitchStatus("Stopping previous connection...");
+        await invoke("stop_singbox");
+        await syncTrayConnectionState(false);
+        setSwitchStatus("Restarting sing-box with new profile...");
+        await invoke<string>("start_singbox");
+        await syncTrayConnectionState(true);
+      }
       await loadNodes();
       await loadProfiles();
       await loadConfigProfiles();
       await loadRuntimeDebug();
       await loadActiveConfigProfile();
+      await loadActiveOutbound();
+      await checkStatus();
       setHasConfig(true);
       setSelectedOutboundTag(result.active_outbound || null);
+      showTransientSwitchStatus(`Switched to ${result.active_outbound || "selected profile"}`);
     } catch (err) {
+      setSwitchStatus(null);
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [loadActiveConfigProfile, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
+  }, [checkStatus, isRunning, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const deleteConfigProfile = useCallback(async (profileId: string) => {
     try {
@@ -274,24 +295,39 @@ export function useSingbox() {
       setLoading(true);
       setError(null);
       if (hasConfig) {
+        setSwitchStatus(`Applying ${tag}...`);
         const actual = await invoke<string>("set_active_outbound", { targetTag: tag });
+        if (isRunning) {
+          setSwitchStatus("Stopping previous node...");
+          await invoke("stop_singbox");
+          await syncTrayConnectionState(false);
+          setSwitchStatus("Starting selected node...");
+          await invoke<string>("start_singbox");
+          await syncTrayConnectionState(true);
+        }
         await loadProfiles();
         await loadRuntimeDebug();
+        await loadActiveOutbound();
+        await checkStatus();
         setSelectedOutboundTag(actual || null);
+        showTransientSwitchStatus(`Switched to ${actual || tag}`);
       } else {
         setSelectedOutboundTag(tag);
+        showTransientSwitchStatus(`Selected ${tag}`);
       }
     } catch (err) {
+      setSwitchStatus(null);
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [hasConfig, loadProfiles, loadRuntimeDebug]);
+  }, [checkStatus, hasConfig, isRunning, loadActiveOutbound, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const startProxy = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
+      setSwitchStatus("Starting sing-box...");
 
       if (hasConfig) {
         if (selectedOutboundTag) {
@@ -307,9 +343,11 @@ export function useSingbox() {
         setIsRunning(true);
         setProxyEnabled(true);
         await syncTrayConnectionState(true);
+        showTransientSwitchStatus("Sing-box started");
       } else {
         if (!selectedOutboundTag) {
           setError("Please select a node or import a config first");
+          setSwitchStatus(null);
           setLoading(false);
           return;
         }
@@ -318,27 +356,32 @@ export function useSingbox() {
         setIsRunning(true);
         setProxyEnabled(true);
         await syncTrayConnectionState(true);
+        showTransientSwitchStatus(`Started with ${selectedOutboundTag}`);
       }
     } catch (err) {
+      setSwitchStatus(null);
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [selectedOutboundTag, hasConfig, loadProfiles, loadRuntimeDebug, syncTrayConnectionState]);
+  }, [selectedOutboundTag, hasConfig, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const stopProxy = useCallback(async () => {
     try {
       setLoading(true);
+      setSwitchStatus("Stopping sing-box...");
       await invoke("stop_singbox");
       await checkStatus();
       await syncTrayConnectionState(false);
       setError(null);
+      showTransientSwitchStatus("Connection closed");
     } catch (err) {
+      setSwitchStatus(null);
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [checkStatus, syncTrayConnectionState]);
+  }, [checkStatus, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const toggleProxy = useCallback(async () => {
     if (isRunning) {
@@ -373,6 +416,7 @@ export function useSingbox() {
     runtimeDebug,
     hasConfig,
     loading,
+    switchStatus,
     error,
     setSelectedOutboundTag: selectOutboundTag,
     addNode,

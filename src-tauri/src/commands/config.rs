@@ -627,6 +627,9 @@ pub async fn get_runtime_debug_snapshot() -> Result<RuntimeDebugSnapshot, String
         .find(|p| p.profile_type == "selector")
         .or_else(|| profiles.first());
 
+    let active_leaf_outbound = detect_runtime_active_leaf_outbound(&config)
+        .unwrap_or_else(|| determine_active_node(&profiles, &nodes));
+
     Ok(RuntimeDebugSnapshot {
         route_final: config
             .get("route")
@@ -640,7 +643,7 @@ pub async fn get_runtime_debug_snapshot() -> Result<RuntimeDebugSnapshot, String
         top_selector_default: top_selector
             .map(|item| item.default_outbound.clone())
             .unwrap_or_default(),
-        active_leaf_outbound: determine_active_node(&profiles, &nodes),
+        active_leaf_outbound,
     })
 }
 
@@ -1025,6 +1028,85 @@ fn determine_active_outbound(profiles: &[Profile], nodes: &[ProxyNode]) -> Strin
     }
 
     nodes.first().map(|n| n.id.clone()).unwrap_or_default()
+}
+
+fn detect_runtime_active_leaf_outbound(config: &serde_json::Value) -> Option<String> {
+    let outbounds = config.get("outbounds")?.as_array()?;
+    let selector = outbounds
+        .iter()
+        .find(|outbound| outbound.get("type").and_then(|value| value.as_str()) == Some("selector"))
+        .or_else(|| {
+            outbounds.iter().find(|outbound| {
+                matches!(
+                    outbound.get("type").and_then(|value| value.as_str()),
+                    Some("selector" | "urltest")
+                )
+            })
+        })?;
+
+    let preferred = selector
+        .get("default")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let candidate = preferred.or_else(|| {
+        selector
+            .get("outbounds")
+            .and_then(|value| value.as_array())
+            .and_then(|members| members.iter().find_map(|member| member.as_str().map(str::to_string)))
+    })?;
+
+    resolve_runtime_concrete_outbound_tag(outbounds, &candidate)
+}
+
+fn resolve_runtime_concrete_outbound_tag(
+    outbounds: &[serde_json::Value],
+    candidate: &str,
+) -> Option<String> {
+    let mut current = candidate.to_string();
+    let mut visited = std::collections::HashSet::new();
+
+    loop {
+        if !visited.insert(current.clone()) {
+            return Some(current);
+        }
+
+        let outbound = outbounds.iter().find(|item| {
+            item.get("tag").and_then(|value| value.as_str()) == Some(current.as_str())
+        })?;
+
+        let outbound_type = outbound
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if outbound_type == "urltest" {
+            return Some(current);
+        }
+        if outbound_type != "selector" {
+            return Some(current);
+        }
+
+        if let Some(default) = outbound
+            .get("default")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            current = default.to_string();
+            continue;
+        }
+
+        if let Some(first_member) = outbound
+            .get("outbounds")
+            .and_then(|value| value.as_array())
+            .and_then(|members| members.iter().find_map(|member| member.as_str()))
+        {
+            current = first_member.to_string();
+            continue;
+        }
+
+        return Some(current);
+    }
 }
 
 fn resolve_profile_leaf_target(
@@ -2294,6 +2376,26 @@ fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value
                     if is_sniff {
                         obj.remove("sniff_override_destination");
                     }
+                }
+            }
+        }
+
+        if let Some(rule_sets) = route.get_mut("rule_set").and_then(|r| r.as_array_mut()) {
+            for rule_set in rule_sets.iter_mut() {
+                let is_remote = rule_set
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value == "remote")
+                    .unwrap_or(false);
+                if !is_remote {
+                    continue;
+                }
+
+                if let Some(obj) = rule_set.as_object_mut() {
+                    obj.insert(
+                        "download_detour".to_string(),
+                        serde_json::Value::String("direct".to_string()),
+                    );
                 }
             }
         }

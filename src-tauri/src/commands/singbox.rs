@@ -628,10 +628,9 @@ fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String>
         .map_err(|e| format!("Failed to parse config for bootstrap preparation: {}", e))?;
 
     let changed_dns = sanitize_runtime_dns_for_bootstrap(&mut config);
-    let changed_selector = pin_top_selector_to_leaf_node(&mut config)?;
-    let selected_outbound = detect_active_outbound_tag(&config);
+    let selected_outbound = detect_selected_outbound_tag(&config);
     let changed_dns_detour = align_runtime_dns_detours(&mut config, selected_outbound.as_deref());
-    let mut changed = changed_dns || changed_selector || changed_dns_detour;
+    let mut changed = changed_dns || changed_dns_detour;
 
     if let Some(rule_sets) = config
         .get_mut("route")
@@ -645,23 +644,12 @@ fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String>
             }
 
             if let Some(obj) = rule_set.as_object_mut() {
-                match &selected_outbound {
-                    Some(outbound) if !outbound.is_empty() => {
-                        if obj.get("download_detour").and_then(|value| value.as_str())
-                            != Some(outbound.as_str())
-                        {
-                            obj.insert(
-                                "download_detour".to_string(),
-                                serde_json::Value::String(outbound.clone()),
-                            );
-                            changed = true;
-                        }
-                    }
-                    _ => {
-                        if obj.remove("download_detour").is_some() {
-                            changed = true;
-                        }
-                    }
+                if obj.get("download_detour").and_then(|value| value.as_str()) != Some("direct") {
+                    obj.insert(
+                        "download_detour".to_string(),
+                        serde_json::Value::String("direct".to_string()),
+                    );
+                    changed = true;
                 }
             }
         }
@@ -904,57 +892,7 @@ fn ensure_runtime_default_domain_resolver(config: &mut serde_json::Value) -> boo
     true
 }
 
-fn pin_top_selector_to_leaf_node(config: &mut serde_json::Value) -> Result<bool, String> {
-    let Some(outbounds) = config
-        .get_mut("outbounds")
-        .and_then(|value| value.as_array_mut())
-    else {
-        return Ok(false);
-    };
-
-    let Some(top_index) = outbounds.iter().position(|outbound| {
-        outbound.get("type").and_then(|value| value.as_str()) == Some("selector")
-    }) else {
-        return Ok(false);
-    };
-
-    let Some(current_default) = outbounds[top_index]
-        .get("default")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-    else {
-        return Ok(false);
-    };
-
-    let Some(leaf) = resolve_concrete_outbound_tag(outbounds, &current_default) else {
-        return Ok(false);
-    };
-
-    if leaf == current_default {
-        return Ok(false);
-    }
-
-    let top_members = outbounds[top_index]
-        .get("outbounds")
-        .and_then(|value| value.as_array())
-        .ok_or("Top selector has no outbounds".to_string())?;
-    let top_contains_leaf = top_members
-        .iter()
-        .any(|member| member.as_str() == Some(leaf.as_str()));
-    if !top_contains_leaf {
-        return Ok(false);
-    }
-
-    if let Some(obj) = outbounds[top_index].as_object_mut() {
-        obj.insert("default".to_string(), serde_json::Value::String(leaf));
-        return Ok(true);
-    }
-
-    Ok(false)
-}
-
-fn detect_active_outbound_tag(config: &serde_json::Value) -> Option<String> {
+fn detect_selected_outbound_tag(config: &serde_json::Value) -> Option<String> {
     let outbounds = config.get("outbounds")?.as_array()?;
     let selector = outbounds
         .iter()
@@ -985,53 +923,7 @@ fn detect_active_outbound_tag(config: &serde_json::Value) -> Option<String> {
             })
     })?;
 
-    resolve_concrete_outbound_tag(outbounds, &candidate)
-}
-
-fn resolve_concrete_outbound_tag(
-    outbounds: &[serde_json::Value],
-    candidate: &str,
-) -> Option<String> {
-    let mut current = candidate.to_string();
-    let mut visited = std::collections::HashSet::new();
-
-    loop {
-        if !visited.insert(current.clone()) {
-            return Some(current);
-        }
-
-        let outbound = outbounds.iter().find(|item| {
-            item.get("tag").and_then(|value| value.as_str()) == Some(current.as_str())
-        })?;
-
-        let outbound_type = outbound
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        if outbound_type != "selector" && outbound_type != "urltest" {
-            return Some(current);
-        }
-
-        if let Some(default) = outbound
-            .get("default")
-            .and_then(|value| value.as_str())
-            .filter(|value| !value.is_empty())
-        {
-            current = default.to_string();
-            continue;
-        }
-
-        if let Some(first_member) = outbound
-            .get("outbounds")
-            .and_then(|value| value.as_array())
-            .and_then(|members| members.iter().find_map(|member| member.as_str()))
-        {
-            current = first_member.to_string();
-            continue;
-        }
-
-        return Some(current);
-    }
+    Some(candidate)
 }
 
 fn should_retry_without_remote_rule_sets(details: &str) -> bool {

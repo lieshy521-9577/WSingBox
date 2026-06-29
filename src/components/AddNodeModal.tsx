@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { ProtocolType, PROTOCOL_LABELS, ProxyNode } from "../types";
 
 interface AddNodeModalProps {
@@ -104,21 +104,31 @@ function AddNodeModal({ onClose, onSubmit, initialNode = null }: AddNodeModalPro
           {/* Protocol */}
           <div>
             <label className="block text-xs text-content-secondary mb-1">Protocol *</label>
-            <select
-              value={nodeType}
-              onChange={(e) => {
-                const type = e.target.value as ProtocolType;
-                setNodeType(type);
-                setSettingsJson(settingsHints[type] || "{}");
-              }}
-              className="w-full px-3 py-2 bg-surface-elevated border border-border rounded-lg text-sm text-content focus:outline-none focus:border-primary-500"
-            >
-              {Object.entries(PROTOCOL_LABELS).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {Object.entries(PROTOCOL_LABELS).map(([key, label]) => {
+                const active = nodeType === key;
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      const type = key as ProtocolType;
+                      setNodeType(type);
+                      setSettingsJson(settingsHints[type] || "{}");
+                    }}
+                    className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition-all ${
+                      active
+                        ? "border-primary-500/40 bg-primary-600/12 text-primary-200 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.16)]"
+                        : "border-border bg-surface-elevated text-content-secondary hover:bg-surface-subtle hover:text-content"
+                    }`}
+                  >
+                    <span className="truncate">{label}</span>
+                    {active && <Check size={14} className="shrink-0 text-primary-300" />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Server & Port */}
