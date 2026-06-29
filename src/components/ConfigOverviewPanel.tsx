@@ -38,8 +38,6 @@ function ConfigOverviewPanel({
   const primaryInbound = overview.inbounds[0] ?? null;
   const activeOutbound = overview.outbounds.find((item) => item.tag === selectedOutboundTag) ?? null;
   const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
-  const pathSegments = overview.file_path.split(/[/\\]/);
-  const activeFileName = pathSegments[pathSegments.length - 1] || overview.file_path;
 
   const sectionTabs: Array<{
     id: OverviewSection;
@@ -56,71 +54,60 @@ function ConfigOverviewPanel({
   return (
     <div className="space-y-3">
       <section className="panel-card rounded-[22px] p-4">
-        <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:items-start">
-          <div className="space-y-3">
-            <div>
-              <p className="section-label mb-1.5">Configuration Overview</p>
-              <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">
-                Runtime snapshot
-              </h2>
-              <p className="mt-2 max-w-2xl text-[13px] leading-5 text-content-secondary">
-                A compact view of the active runtime state and the imported profile behind it.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              <SnapshotChip
-                icon={<Sparkles size={13} />}
-                label="Route target"
-                value={activeOutbound?.tag ?? "Not selected"}
-                detail={
-                  activeOutbound
-                    ? activeOutbound.is_group
-                      ? `${activeOutbound.outbound_type} group`
-                      : `${activeOutbound.outbound_type}${activeOutbound.server ? ` - ${activeOutbound.server}` : ""}`
-                    : "Choose a node or group"
-                }
-              />
-              <SnapshotChip
-                icon={<Network size={13} />}
-                label="Inbound"
-                value={primaryInbound?.inbound_type ?? "Unknown"}
-                detail={primaryInbound?.tag ?? "No inbound tag"}
-              />
-              <SnapshotChip
-                icon={<Globe size={13} />}
-                label="DNS"
-                value={dnsServer?.tag ?? "Unset"}
-                detail={dnsServer?.server ?? "No DNS server configured"}
-              />
-              <SnapshotChip
-                icon={<Layers3 size={13} />}
-                label="Nodes / Groups"
-                value={`${proxyNodes.length} / ${groups.length}`}
-                detail="Manage membership in the Nodes page"
-              />
-              <SnapshotChip
-                icon={<Route size={13} />}
-                label="Route Rules"
-                value={String(overview.route_rules_count)}
-                detail={`${rulesWithOutbound} target outbound`}
-              />
-              <SnapshotChip
-                icon={<FileJson size={13} />}
-                label="Rule Sets"
-                value={String(overview.rule_sets.length)}
-                detail={overview.rule_sets[0]?.tag ?? "No remote set"}
-              />
-            </div>
+        <div className="space-y-3">
+          <div>
+            <p className="section-label mb-1.5">Configuration Overview</p>
+            <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">
+              Runtime snapshot
+            </h2>
+            <p className="mt-2 max-w-2xl text-[13px] leading-5 text-content-secondary">
+              A compact view of the active runtime state and the imported profile behind it.
+            </p>
           </div>
 
-          <div className="surface-block rounded-2xl px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-content-secondary">
-              <FileJson size={14} className="shrink-0" />
-              <span className="section-label !tracking-[0.14em]">Active file</span>
-            </div>
-            <p className="mt-1 truncate text-sm font-semibold text-content">{activeFileName}</p>
-            <p className="mt-1 break-all text-xs leading-5 text-content-secondary">{overview.file_path}</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+            <SnapshotChip
+              icon={<Sparkles size={13} />}
+              label="Route target"
+              value={activeOutbound?.tag ?? "Not selected"}
+              detail={
+                activeOutbound
+                  ? activeOutbound.is_group
+                    ? `${activeOutbound.outbound_type} group`
+                    : `${activeOutbound.outbound_type}${activeOutbound.server ? ` - ${activeOutbound.server}` : ""}`
+                  : "Choose a node or group"
+              }
+            />
+            <SnapshotChip
+              icon={<Network size={13} />}
+              label="Inbound"
+              value={primaryInbound?.inbound_type ?? "Unknown"}
+              detail={primaryInbound?.tag ?? "No inbound tag"}
+            />
+            <SnapshotChip
+              icon={<Globe size={13} />}
+              label="DNS"
+              value={dnsServer?.tag ?? "Unset"}
+              detail={dnsServer?.server ?? "No DNS server configured"}
+            />
+            <SnapshotChip
+              icon={<Layers3 size={13} />}
+              label="Nodes / Groups"
+              value={`${proxyNodes.length} / ${groups.length}`}
+              detail="Manage membership in the Nodes page"
+            />
+            <SnapshotChip
+              icon={<Route size={13} />}
+              label="Route Rules"
+              value={String(overview.route_rules_count)}
+              detail={`${rulesWithOutbound} target outbound`}
+            />
+            <SnapshotChip
+              icon={<FileJson size={13} />}
+              label="Rule Sets"
+              value={String(overview.rule_sets.length)}
+              detail={overview.rule_sets[0]?.tag ?? "No remote set"}
+            />
           </div>
         </div>
       </section>
@@ -159,7 +146,7 @@ function ConfigOverviewPanel({
 
         <div className="pt-4">
           {activeSection === "nodes" && (
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            <div className="space-y-3">
               <section className="surface-block rounded-[20px] p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
@@ -186,29 +173,10 @@ function ConfigOverviewPanel({
                         <span className="rounded-full bg-surface-elevated px-2 py-1">
                           members: {group.group_members.length}
                         </span>
-                        {group.server && (
-                          <span className="rounded-full bg-surface-elevated px-2 py-1">
-                            server: {group.server}
-                          </span>
-                        )}
                         {group.details && (
                           <span className="rounded-full bg-surface-elevated px-2 py-1">
                             {group.details}
                           </span>
-                        )}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {group.group_members.length > 0 ? (
-                          group.group_members.map((member) => (
-                            <span
-                              key={`${group.tag}-${member}`}
-                              className="rounded-xl bg-surface-elevated px-2 py-1 text-[11px] text-content-secondary"
-                            >
-                              {member}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-xs text-content-muted">No members listed</span>
                         )}
                       </div>
                     </div>
@@ -226,9 +194,8 @@ function ConfigOverviewPanel({
                   </div>
                   <span className="status-chip">{proxyNodes.length}</span>
                 </div>
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
                   {proxyNodes.map((node) => {
-                    const groupsForNode = groups.filter((group) => group.group_members.includes(node.tag));
                     const isSelected = selectedOutboundTag === node.tag;
 
                     return (
@@ -238,8 +205,8 @@ function ConfigOverviewPanel({
                           isSelected ? "border-primary-500/30 bg-primary-600/10" : ""
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
                                 {node.outbound_type}
@@ -247,26 +214,8 @@ function ConfigOverviewPanel({
                               <p className="truncate text-sm font-medium text-content">{node.tag}</p>
                               {isSelected && <span className="status-chip status-chip-primary">Active</span>}
                             </div>
-                            <p className="mt-1 truncate text-xs text-content-secondary">
-                              {node.server}
-                              {node.port > 0 ? `:${node.port}` : ""}
-                            </p>
                           </div>
-                          <ChevronRight size={14} className="mt-1 shrink-0 text-content-muted" />
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {groupsForNode.length > 0 ? (
-                            groupsForNode.map((group) => (
-                              <span
-                                key={`${node.tag}-${group.tag}`}
-                                className="rounded-xl bg-surface-elevated px-2 py-1 text-[11px] text-content-secondary"
-                              >
-                                {group.tag}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-xs text-content-muted">Standalone node</span>
-                          )}
+                          <ChevronRight size={14} className="shrink-0 text-content-muted" />
                         </div>
                       </div>
                     );
@@ -284,13 +233,21 @@ function ConfigOverviewPanel({
                   Top-level DNS target and server list from the current profile.
                 </p>
                 <div className="mt-3 space-y-2">
-                  <CompactRow label="Final" value={dnsServer?.tag ?? "Unset"} detail={dnsServer?.server ?? "No server configured"} />
+                  <CompactRow
+                    label="Final"
+                    value={dnsServer?.tag ?? "Unset"}
+                    detail={
+                      dnsServer
+                        ? `${dnsServer.dns_type} - ${dnsServer.server}`
+                        : "No server configured"
+                    }
+                  />
                   <CompactRow
                     label="Servers"
                     value={`${overview.dns_servers.length}`}
                     detail={
                       overview.dns_servers.length > 0
-                        ? `${overview.dns_servers[0]?.dns_type ?? "dns"} - first entry shown`
+                        ? `${overview.dns_servers.filter((server) => server.dns_type === "local").length} local, ${overview.dns_servers.filter((server) => server.dns_type !== "local").length} remote`
                         : "No DNS servers configured"
                     }
                   />
@@ -309,14 +266,32 @@ function ConfigOverviewPanel({
                 </div>
                 <div className="space-y-2">
                   {overview.dns_servers.map((server) => (
-                    <div key={server.tag} className="subtle-row rounded-2xl px-3 py-2.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
-                          {server.dns_type}
+                    <div key={server.tag} className="subtle-row rounded-2xl px-3 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+                            {server.dns_type}
+                          </span>
+                          <p className="text-sm font-medium text-content">{server.tag}</p>
+                        </div>
+                        <span className="rounded-full bg-surface-elevated px-2 py-1 text-[10px] text-content-secondary">
+                          DNS server
                         </span>
-                        <p className="text-sm font-medium text-content">{server.tag}</p>
                       </div>
-                      <p className="mt-1 truncate text-xs text-content-secondary">{server.server}</p>
+                      <p className="mt-2 break-all text-xs leading-5 text-content-secondary">{server.server}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="rounded-full bg-surface-elevated px-2 py-1 text-[10px] text-content-secondary">
+                          tag: {server.tag}
+                        </span>
+                        <span className="rounded-full bg-surface-elevated px-2 py-1 text-[10px] text-content-secondary">
+                          type: {server.dns_type}
+                        </span>
+                        {server.server && (
+                          <span className="rounded-full bg-surface-elevated px-2 py-1 text-[10px] text-content-secondary">
+                            address: {server.server}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

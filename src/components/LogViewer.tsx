@@ -60,31 +60,6 @@ function LogViewer() {
 
   return (
     <div className="page-entrance flex h-full min-h-0 flex-col gap-3">
-      <div className="panel-card rounded-[22px] p-[clamp(0.75rem,1.3vw,1rem)]">
-        <div className="flex flex-col gap-[clamp(0.625rem,1.1vw,0.75rem)] lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="section-label mb-1">Runtime</p>
-            <h2 className="text-[clamp(1.05rem,2vw,1.35rem)] font-semibold tracking-tight text-content">Live logs</h2>
-            <p className="mt-1.5 text-[clamp(0.78rem,1.15vw,0.8125rem)] leading-5 text-content-secondary">
-              Inspect recent sing-box activity, routing decisions, and runtime failures without leaving the client.
-            </p>
-          </div>
-          <button
-            onClick={clearLogs}
-            className="btn-secondary flex items-center gap-1.5 rounded-2xl px-3 py-2 text-sm transition-colors"
-          >
-            <Trash2 size={14} />
-            Clear
-          </button>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-[clamp(0.375rem,0.8vw,0.5rem)] lg:grid-cols-4">
-          <MiniStat icon={<TerminalSquare size={14} />} label="Entries" value={String(logs.length)} color="text-sky-500 dark:text-sky-400" />
-          <MiniStat icon={<Activity size={14} />} label="Stream" value={loading ? "..." : "Live"} color="text-emerald-500 dark:text-emerald-400" />
-          <MiniStat icon={<ShieldAlert size={14} />} label="Errors" value={String(errorCount)} color="text-red-500 dark:text-red-400" />
-          <MiniStat icon={<Activity size={14} />} label="Warnings" value={String(warningCount)} color="text-yellow-500 dark:text-yellow-400" />
-        </div>
-      </div>
-
       <div className="flex-1 min-h-0 overflow-hidden rounded-[22px] border border-slate-900/90 bg-slate-950 text-xs shadow-[0_30px_80px_rgba(2,6,23,0.34)]">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
@@ -109,6 +84,31 @@ function LogViewer() {
               </div>
             ))
           )}
+        </div>
+      </div>
+
+      <div className="panel-card rounded-[22px] p-[clamp(0.75rem,1.3vw,1rem)]">
+        <div className="flex flex-col gap-[clamp(0.625rem,1.1vw,0.75rem)] lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="section-label mb-1">Runtime</p>
+            <h2 className="text-[clamp(1.05rem,2vw,1.35rem)] font-semibold tracking-tight text-content">Live logs</h2>
+            <p className="mt-1.5 text-[clamp(0.78rem,1.15vw,0.8125rem)] leading-5 text-content-secondary">
+              Inspect recent sing-box activity, routing decisions, and runtime failures without leaving the client.
+            </p>
+          </div>
+          <button
+            onClick={clearLogs}
+            className="btn-secondary flex items-center gap-1.5 rounded-2xl px-3 py-2 text-sm transition-colors"
+          >
+            <Trash2 size={14} />
+            Clear
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-[clamp(0.375rem,0.8vw,0.5rem)] lg:grid-cols-4">
+          <MiniStat icon={<TerminalSquare size={14} />} label="Entries" value={String(logs.length)} color="text-sky-500 dark:text-sky-400" />
+          <MiniStat icon={<Activity size={14} />} label="Stream" value={loading ? "..." : "Live"} color="text-emerald-500 dark:text-emerald-400" />
+          <MiniStat icon={<ShieldAlert size={14} />} label="Errors" value={String(errorCount)} color="text-red-500 dark:text-red-400" />
+          <MiniStat icon={<Activity size={14} />} label="Warnings" value={String(warningCount)} color="text-yellow-500 dark:text-yellow-400" />
         </div>
       </div>
     </div>

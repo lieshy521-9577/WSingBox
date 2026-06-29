@@ -52,18 +52,16 @@ function NodeList({
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [latencyMode, setLatencyMode] = useState<"auto" | "connect" | "http">("auto");
 
-  const getNodeProfiles = (nodeId: string): string[] => {
-    return profiles
-      .filter((p) => p.outbounds.includes(nodeId))
-      .map((p) => `${p.tag} (${p.profile_type})`);
-  };
-
   const nodeMap = useMemo(
     () => Object.fromEntries(nodes.map((node) => [node.id, node])),
     [nodes]
   );
 
   const topSelectorTag = profiles.find((p) => p.profile_type === "selector")?.tag ?? profiles[0]?.tag ?? null;
+  const visibleProfiles = useMemo(
+    () => profiles.filter((profile) => !(profile.tag === "proxy" && profile.profile_type === "selector")),
+    [profiles]
+  );
   const activeGroup = profiles.find((profile) => profile.tag === selectedOutboundTag) ?? null;
   const activeNode = nodes.find((node) => node.id === selectedOutboundTag) ?? null;
   const resolveLatencyMode = (nodeType: string) => {
@@ -188,7 +186,7 @@ function NodeList({
               <SummaryPill
                 icon={<Layers3 size={13} />}
                 label="Groups"
-                value={`${profiles.length} configured`}
+                value={`${visibleProfiles.length} configured`}
               />
               <SummaryPill
                 icon={<Network size={13} />}
@@ -229,17 +227,17 @@ function NodeList({
 
       </div>
 
-      {profiles.length > 0 && (
+      {visibleProfiles.length > 0 && (
         <div className="panel-card rounded-[24px] p-4">
           <div className="mb-3 flex items-center justify-between px-2">
             <div>
               <h3 className="text-sm font-semibold text-content">Outbound Groups</h3>
               <p className="text-[11px] text-content-muted">Expand a group to inspect members and select a nested route target.</p>
             </div>
-            <span className="status-chip">{profiles.length}</span>
+            <span className="status-chip">{visibleProfiles.length}</span>
           </div>
           <div className="space-y-2">
-            {profiles.map((profile) => (
+            {visibleProfiles.map((profile) => (
               <div key={profile.tag} className="panel-card overflow-hidden rounded-[24px]">
                 <div
                   onClick={() => onSelect(profile.tag)}
@@ -373,90 +371,65 @@ function NodeList({
           <div className="mb-4 flex items-center justify-between px-2">
             <div>
               <h3 className="text-sm font-semibold text-content">Proxy Nodes</h3>
-              <p className="text-[11px] text-content-muted">Direct targets you can pick independently from selector groups.</p>
+              <p className="text-[11px] text-content-muted">Compact node list for quick target switching.</p>
             </div>
             <span className="status-chip">{nodes.length}</span>
           </div>
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 2xl:grid-cols-3">
             {nodes.map((node) => {
               const isSelected = node.id === selectedOutboundTag;
               const protocolLabel =
                 PROTOCOL_LABELS[node.node_type as ProtocolType] || node.node_type;
-              const nodeProfileNames = getNodeProfiles(node.id);
 
               return (
                 <div
                   key={node.id}
                   onClick={() => onSelect(node.id)}
-                  className={`flex cursor-pointer flex-col gap-4 rounded-[24px] border p-4 transition-all ${
+                  className={`flex cursor-pointer items-center gap-3 rounded-[20px] border px-3 py-2.5 transition-all ${
                     isSelected ? "border-primary-500/30 bg-primary-600/10" : "subtle-row"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        {isSelected ? (
-                          <CheckCircle2 size={18} className="text-primary-500" />
-                        ) : (
-                          <div className="h-[18px] w-[18px] rounded-full border-2 border-surface-muted" />
-                        )}
-                        <span className="truncate text-sm font-medium text-content">
-                          {node.name}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-xs text-content-secondary">
-                        {node.server}{node.port > 0 ? `:${node.port}` : ""}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {renderLatency(node.id)}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEdit(node);
-                        }}
-                        className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
-                        title="Edit node"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemove(node.id);
-                        }}
-                        className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-red-500/20 hover:text-red-500 dark:hover:text-red-400"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-xl bg-surface-elevated px-2 py-1 text-[10px] text-content-secondary">
-                      {protocolLabel}
-                    </span>
-                    {nodeProfileNames.length > 0 && (
-                      <span className="rounded-xl bg-green-500/15 px-2 py-1 text-[10px] text-green-600 dark:text-green-400">
-                        {nodeProfileNames.length} group{nodeProfileNames.length > 1 ? "s" : ""}
-                      </span>
+                  <div className="shrink-0">
+                    {isSelected ? (
+                      <CheckCircle2 size={18} className="text-primary-500" />
+                    ) : (
+                      <div className="h-[18px] w-[18px] rounded-full border-2 border-surface-muted" />
                     )}
-                    {isSelected && <span className="status-chip status-chip-primary">Active target</span>}
                   </div>
 
-                  <div className="space-y-2">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-content-muted">Group membership</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {nodeProfileNames.length > 0 ? (
-                        nodeProfileNames.map((name) => (
-                          <span key={name} className="rounded-xl bg-surface-elevated px-2 py-1 text-[11px] text-content-secondary">
-                            {name}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-xs text-content-muted">Standalone node</span>
-                      )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-content">{node.name}</span>
+                      {isSelected && <span className="status-chip status-chip-primary">Active</span>}
                     </div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">
+                        {protocolLabel}
+                      </span>
+                      {renderLatency(node.id)}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEdit(node);
+                      }}
+                      className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
+                      title="Edit node"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemove(node.id);
+                      }}
+                      className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-red-500/20 hover:text-red-500 dark:hover:text-red-400"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               );

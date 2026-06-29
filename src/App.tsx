@@ -33,6 +33,7 @@ function App() {
   const [coreVersion, setCoreVersion] = useState("Detecting...");
   const [showStartupTips, setShowStartupTips] = useState(false);
   const [suppressStartupTips, setSuppressStartupTips] = useState(true);
+  const [editingConfigProfile, setEditingConfigProfile] = useState<{ id: string; name: string; value: string } | null>(null);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
 
@@ -145,18 +146,6 @@ function App() {
     }
   }, [singbox]);
 
-  const handleClearConfig = useCallback(async () => {
-    if (!window.confirm("Are you sure you want to clear all saved imported profiles?")) return;
-    try {
-      await invoke("clear_config");
-      setConfigOverview(null);
-      await singbox.onConfigImported("");
-      singbox.setError(null);
-    } catch (err) {
-      singbox.setError(String(err));
-    }
-  }, [singbox]);
-
   const handleEditRouteRule = useCallback((index: number, rule: RouteRuleInfo) => {
     setEditingRouteRule({ index, rule });
   }, []);
@@ -195,6 +184,53 @@ function App() {
     setShowStartupTips(false);
   }, [suppressStartupTips]);
 
+  const handleOpenConfigProfileEditor = useCallback(async (profileId: string) => {
+    try {
+      const profile = singbox.configProfiles.find((item) => item.id === profileId);
+      if (!profile) {
+        throw new Error("Profile not found");
+      }
+
+      const config = await invoke<Record<string, unknown>>("get_config_profile_json", { profileId });
+      setEditingConfigProfile({
+        id: profileId,
+        name: profile.name,
+        value: JSON.stringify(config, null, 2),
+      });
+    } catch (err) {
+      singbox.setError(String(err));
+    }
+  }, [singbox]);
+
+  const handleSaveConfigProfile = useCallback(async (value: string) => {
+    if (!editingConfigProfile) {
+      throw new Error("No config profile selected");
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error("Profile config must be valid JSON");
+    }
+
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+      throw new Error("Profile config must be a JSON object");
+    }
+
+    await invoke("save_config_profile_json", {
+      profileId: editingConfigProfile.id,
+      config: parsed,
+    });
+
+    setEditingConfigProfile(null);
+    await singbox.loadConfigProfiles();
+    if (singbox.activeConfigProfileId === editingConfigProfile.id) {
+      await loadOverview();
+      await singbox.onConfigImported("");
+    }
+  }, [editingConfigProfile, loadOverview, singbox]);
+
   return (
     <div className="h-screen overflow-hidden bg-surface-base p-[clamp(0.25rem,0.55vw,0.375rem)]">
       <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[22px]">
@@ -209,11 +245,11 @@ function App() {
           isRunning={singbox.isRunning}
           onImportConfig={handleImportConfig}
           onImportConfigUrl={handleImportConfigUrl}
-          onClearConfig={handleClearConfig}
           configProfiles={singbox.configProfiles}
           activeConfigProfileId={singbox.activeConfigProfileId}
           onSwitchConfigProfile={singbox.switchConfigProfile}
           onDeleteConfigProfile={singbox.deleteConfigProfile}
+          onEditConfigProfile={(profileId) => void handleOpenConfigProfileEditor(profileId)}
         />
 
         {/* Main content */}
@@ -311,6 +347,18 @@ function App() {
           initialValue={JSON.stringify(editingRouteRule.rule.raw, null, 2)}
           onClose={() => setEditingRouteRule(null)}
           onSave={handleSaveRouteRule}
+        />
+      )}
+
+      {editingConfigProfile && (
+        <RouteRuleModal
+          open={!!editingConfigProfile}
+          title={`Edit Profile JSON: ${editingConfigProfile.name}`}
+          description="Edit the full saved sing-box profile JSON. Invalid JSON will be rejected before save."
+          initialValue={editingConfigProfile.value}
+          saveLabel="Save Profile"
+          onClose={() => setEditingConfigProfile(null)}
+          onSave={handleSaveConfigProfile}
         />
       )}
 

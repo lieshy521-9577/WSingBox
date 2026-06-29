@@ -142,6 +142,7 @@ pub fn run() {
             config::get_runtime_debug_snapshot,
             config::get_config_profiles,
             config::get_active_config_profile,
+            config::get_config_profile_json,
             config::has_imported_config,
             config::clear_config,
             config::get_app_settings,
@@ -155,6 +156,8 @@ pub fn run() {
             config::remove_group,
             config::switch_config_profile,
             config::delete_config_profile,
+            config::rename_config_profile,
+            config::save_config_profile_json,
             // latency testing
             latency::test_node_latency,
             latency::test_all_latency,

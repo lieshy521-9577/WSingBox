@@ -5,11 +5,21 @@ interface RouteRuleModalProps {
   open: boolean;
   title: string;
   initialValue: string;
+  description?: string;
+  saveLabel?: string;
   onClose: () => void;
   onSave: (value: string) => Promise<void>;
 }
 
-function RouteRuleModal({ open, title, initialValue, onClose, onSave }: RouteRuleModalProps) {
+function RouteRuleModal({
+  open,
+  title,
+  initialValue,
+  description = "Edit the rule JSON directly. Invalid JSON will be rejected.",
+  saveLabel = "Save Rule",
+  onClose,
+  onSave,
+}: RouteRuleModalProps) {
   const [value, setValue] = useState(initialValue);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +52,7 @@ function RouteRuleModal({ open, title, initialValue, onClose, onSave }: RouteRul
           <div>
             <h3 className="text-base font-semibold text-content">{title}</h3>
             <p className="mt-1 text-xs text-content-secondary">
-              Edit the rule JSON directly. Invalid JSON will be rejected.
+              {description}
             </p>
           </div>
           <button
@@ -82,7 +92,7 @@ function RouteRuleModal({ open, title, initialValue, onClose, onSave }: RouteRul
               disabled={saving}
               className="rounded-lg bg-primary-600 px-4 py-2 text-sm text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
             >
-              {saving ? "Saving..." : "Save Rule"}
+              {saving ? "Saving..." : saveLabel}
             </button>
           </div>
         </div>

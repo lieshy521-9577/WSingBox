@@ -1,4 +1,4 @@
-import { Network, ScrollText, LayoutDashboard, FileUp, Trash2, Settings, FolderOpen, Info } from "lucide-react";
+import { Network, ScrollText, LayoutDashboard, FileUp, Trash2, Settings, FolderOpen, Info, Link2, Pencil } from "lucide-react";
 import { ConfigProfile } from "../types";
 
 type Page = "overview" | "nodes" | "logs" | "settings" | "about";
@@ -9,11 +9,11 @@ interface SidebarProps {
   isRunning: boolean;
   onImportConfig: () => void;
   onImportConfigUrl: () => void;
-  onClearConfig: () => void;
   configProfiles: ConfigProfile[];
   activeConfigProfileId: string | null;
   onSwitchConfigProfile: (profileId: string) => void;
   onDeleteConfigProfile: (profileId: string) => void;
+  onEditConfigProfile: (profileId: string) => void;
 }
 
 function Sidebar({
@@ -22,11 +22,11 @@ function Sidebar({
   isRunning,
   onImportConfig,
   onImportConfigUrl,
-  onClearConfig,
   configProfiles,
   activeConfigProfileId,
   onSwitchConfigProfile,
   onDeleteConfigProfile,
+  onEditConfigProfile,
 }: SidebarProps) {
   const navItems = [
     { id: "overview" as Page, label: "Overview", icon: LayoutDashboard },
@@ -93,20 +93,38 @@ function Sidebar({
       {/* Bottom actions */}
       <div className="min-h-0 flex-1 overflow-hidden border-t border-border/80 px-[clamp(0.625rem,1vw,0.75rem)] py-[clamp(0.625rem,1vw,0.75rem)]">
         <div className="flex h-full min-h-0 flex-col">
-        <div className="surface-block mb-3 rounded-2xl p-2">
+        <div className="surface-block mb-3 rounded-2xl px-2.5 py-2.5">
           <button
             onClick={onImportConfig}
-            className="btn-primary flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition-colors"
+            className="btn-primary flex w-full items-center gap-3 rounded-2xl px-3.5 py-3 text-sm font-medium shadow-[0_10px_30px_rgba(37,99,235,0.18)] transition-all hover:translate-y-[-1px]"
           >
             <FileUp size={16} />
             Import Profile
           </button>
-          <button
-            onClick={onImportConfigUrl}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-border/70 bg-white/55 px-3 py-2 text-xs font-medium text-content-secondary transition-colors hover:bg-surface-elevated hover:text-content dark:bg-slate-900/25"
-          >
-            Import from URL
-          </button>
+          <div className="mt-2 rounded-2xl border border-border/70 bg-white/35 p-1 dark:bg-slate-950/20">
+            <button
+              onClick={onImportConfigUrl}
+              className="flex w-full items-center justify-between rounded-[1rem] px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated/80"
+            >
+              <span className="flex items-center gap-2.5">
+                <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-primary-600/10 text-primary-600 dark:text-primary-300">
+                  <Link2 size={14} />
+                </span>
+                <span>
+                  <span className="block text-[12px] font-medium text-content">Import from URL</span>
+                  <span className="block text-[10px] tracking-[0.12em] text-content-muted">
+                    Subscription link
+                  </span>
+                </span>
+              </span>
+              <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-content-muted">
+                JSON
+              </span>
+            </button>
+          </div>
+          <p className="px-1.5 pt-2 text-[10px] leading-4 text-content-muted">
+            Import a local JSON file or a subscription URL.
+          </p>
         </div>
         {configProfiles.length > 0 && (
           <div className="mb-3 min-h-0 flex-1 space-y-1 overflow-hidden">
@@ -122,7 +140,7 @@ function Sidebar({
                 return (
                   <div
                     key={profile.id}
-                    className={`flex items-center gap-2 rounded-2xl border px-2 py-1.5 transition-all ${
+                    className={`flex min-w-0 items-center gap-2 rounded-2xl border px-2 py-1.5 transition-all ${
                       isActive
                         ? "border-primary-500/20 bg-primary-600/10"
                         : "border-transparent bg-white/45 hover:border-border/70 dark:bg-slate-900/20"
@@ -130,44 +148,45 @@ function Sidebar({
                   >
                     <button
                       onClick={() => onSwitchConfigProfile(profile.id)}
-                      className={`flex flex-1 items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors ${
+                      className={`flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-2 text-left text-xs transition-colors ${
                         isActive
                           ? "text-primary-700 dark:text-primary-300"
                           : "text-content-secondary hover:text-content"
                       }`}
                       title={profile.source_path}
                     >
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-elevated">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-elevated">
                         <FolderOpen size={14} />
                       </span>
-                      <span className="min-w-0">
+                      <span className="min-w-0 flex-1 overflow-hidden">
                         <span className="block truncate font-medium">{profile.name}</span>
                         <span className="block truncate text-[10px] text-content-muted">
                           saved config
                         </span>
                       </span>
                     </button>
-                    <button
-                      onClick={() => onDeleteConfigProfile(profile.id)}
-                      className="rounded-xl p-2 text-content-muted transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
-                      title="Delete profile"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        onClick={() => onEditConfigProfile(profile.id)}
+                        className="rounded-xl p-2 text-content-muted transition-colors hover:bg-primary-500/10 hover:text-primary-500 dark:hover:text-primary-300"
+                        title="Edit profile JSON"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        onClick={() => onDeleteConfigProfile(profile.id)}
+                        className="rounded-xl p-2 text-content-muted transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
+                        title="Delete profile"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
         )}
-        <button
-          onClick={onClearConfig}
-          className="mt-auto flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-sm text-content-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400"
-          title="Clear all saved profiles"
-        >
-          <Trash2 size={15} />
-          <span className="truncate">Clear All Profiles</span>
-        </button>
         </div>
       </div>
     </aside>

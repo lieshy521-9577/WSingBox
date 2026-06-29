@@ -69,15 +69,7 @@ function ProxyControl({
 
   const resolvedGroupNode = selectedNode ? null : resolveActiveNode(selectedOutboundTag);
   const statusLabel = isRunning ? "Traffic Live" : "Standby";
-  const targetSummary = selectedNode
-    ? `${selectedNode.name} (${selectedNode.server}:${selectedNode.port})`
-    : selectedProfile
-      ? resolvedGroupNode
-        ? `${selectedProfile.tag} -> ${resolvedGroupNode.name}`
-        : `${selectedProfile.tag} (${selectedProfile.profile_type})`
-      : hasConfig
-        ? "Imported profile workspace"
-        : "No route target selected";
+  const activeLabel = selectedNode?.name ?? resolvedGroupNode?.name ?? selectedProfile?.tag ?? "Not selected";
 
   return (
     <div className="border-b border-border/80 bg-surface/85 px-[clamp(0.875rem,1.6vw,1.25rem)] py-[clamp(0.75rem,1.4vw,1rem)]">
@@ -108,20 +100,17 @@ function ProxyControl({
                 ? `Active: ${selectedNode.name} (${selectedNode.server}:${selectedNode.port})`
                 : selectedProfile
                   ? resolvedGroupNode
-                    ? `Active Group: ${selectedProfile.tag} -> ${resolvedGroupNode.name} (${resolvedGroupNode.server}:${resolvedGroupNode.port})`
+                    ? `Active: ${selectedProfile.tag} -> ${resolvedGroupNode.name} (${resolvedGroupNode.server}:${resolvedGroupNode.port})`
                     : `Active Group: ${selectedProfile.tag} (${selectedProfile.profile_type})`
                 : hasConfig
                   ? "Using imported config (auto-select by profile)"
                   : "No node selected"}
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
-              <ControlPill label="Target" value={targetSummary} />
+              <ControlPill label="Target" value={activeLabel} />
               <ControlPill label="Switch" value={loading ? "Updating" : "Ready"} />
-              {runtimeDebug?.top_selector_default && (
-                <ControlPill label="Selector Default" value={runtimeDebug.top_selector_default} />
-              )}
-              {runtimeDebug?.active_leaf_outbound && (
-                <ControlPill label="Leaf Node" value={runtimeDebug.active_leaf_outbound} />
+              {!selectedNode && selectedProfile && (
+                <ControlPill label="Group" value={selectedProfile.tag} />
               )}
             </div>
           </div>
@@ -140,11 +129,6 @@ function ProxyControl({
           {proxyEnabled && (
             <span className="status-pill bg-primary-600/15 text-primary-700 dark:text-primary-300">
               System Proxy: ON
-            </span>
-          )}
-          {selectedProfile && resolvedGroupNode && (
-            <span className="status-pill bg-sky-500/12 text-sky-700 dark:text-sky-300">
-              Current Node: {resolvedGroupNode.name}
             </span>
           )}
           {runtimeDebug?.route_final && (

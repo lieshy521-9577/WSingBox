@@ -255,6 +255,20 @@ export function useSingbox() {
     }
   }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
 
+  const renameConfigProfile = useCallback(async (profileId: string, newName: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      await invoke("rename_config_profile", { profileId, newName });
+      await loadConfigProfiles();
+    } catch (err) {
+      setError(String(err));
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadConfigProfiles]);
+
   const selectOutboundTag = useCallback(async (tag: string) => {
     try {
       setLoading(true);
@@ -367,6 +381,7 @@ export function useSingbox() {
     removeGroup,
     switchConfigProfile,
     deleteConfigProfile,
+    renameConfigProfile,
     startProxy,
     stopProxy,
     toggleProxy,

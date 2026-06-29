@@ -506,6 +506,73 @@ pub async fn delete_config_profile(profile_id: String) -> Result<String, String>
     Ok(removed.id)
 }
 
+#[tauri::command]
+pub async fn rename_config_profile(profile_id: String, new_name: String) -> Result<ConfigProfile, String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("Profile name cannot be empty".to_string());
+    }
+
+    let mut profiles = load_config_profiles()?;
+    let profile = profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
+
+    profile.name = trimmed.to_string();
+    profile.updated_at = current_unix_timestamp();
+    let updated = profile.clone();
+    save_config_profiles(&profiles)?;
+
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn get_config_profile_json(profile_id: String) -> Result<serde_json::Value, String> {
+    let profiles = load_config_profiles()?;
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
+
+    let profile_path = get_config_profiles_dir().join(format!("{}.json", profile.id));
+    let content = fs::read_to_string(&profile_path)
+        .map_err(|e| format!("Failed to read saved profile config: {}", e))?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse saved profile config: {}", e))
+}
+
+#[tauri::command]
+pub async fn save_config_profile_json(
+    profile_id: String,
+    config: serde_json::Value,
+) -> Result<String, String> {
+    let mut profiles = load_config_profiles()?;
+    let profile = profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
+
+    let config = sanitize_config_for_v1_12(config);
+    let settings = load_app_settings().unwrap_or_else(|_| infer_settings_from_config(&config));
+    let config = apply_app_settings_to_config(config, &settings);
+
+    let profile_path = get_config_profiles_dir().join(format!("{}.json", profile.id));
+    let content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize saved profile config: {}", e))?;
+    fs::write(&profile_path, content)
+        .map_err(|e| format!("Failed to save profile config: {}", e))?;
+
+    profile.updated_at = current_unix_timestamp();
+    save_config_profiles(&profiles)?;
+
+    let active_profile_id = load_active_config_profile_id().unwrap_or_default();
+    if active_profile_id == profile_id {
+        activate_config_profile_internal(&profile_id)?;
+    }
+
+    Ok("Profile saved".to_string())
+}
+
 /// Get saved profiles
 #[tauri::command]
 pub async fn get_profiles() -> Result<Vec<Profile>, String> {
@@ -1744,12 +1811,7 @@ fn save_imported_config_profile(
     let mut profiles = load_config_profiles()?;
     let id = Uuid::new_v4().to_string();
     let now = current_unix_timestamp();
-    let name = Path::new(source_path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Imported Profile")
-        .to_string();
+    let name = derive_config_profile_name(source_path);
 
     let profile = ConfigProfile {
         id: id.clone(),
@@ -1770,6 +1832,46 @@ fn save_imported_config_profile(
     save_active_config_profile_id(&profile.id)?;
 
     Ok(profile)
+}
+
+fn derive_config_profile_name(source_path: &str) -> String {
+    if let Ok(url) = reqwest::Url::parse(source_path) {
+        if let Some(fragment) = url.fragment() {
+            let decoded = percent_encoding::percent_decode_str(fragment)
+                .decode_utf8()
+                .map(|value| value.trim().to_string())
+                .unwrap_or_else(|_| fragment.trim().to_string());
+            if !decoded.is_empty() {
+                return decoded;
+            }
+        }
+
+        if let Some(last_segment) = url
+            .path_segments()
+            .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+        {
+            let stem = Path::new(last_segment)
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(stem) = stem {
+                return stem.to_string();
+            }
+        }
+
+        if let Some(host) = url.host_str() {
+            return host.to_string();
+        }
+    }
+
+    Path::new(source_path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Imported Profile")
+        .to_string()
 }
 
 fn activate_config_profile_internal(profile_id: &str) -> Result<ImportResult, String> {

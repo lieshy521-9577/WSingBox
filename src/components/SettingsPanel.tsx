@@ -164,58 +164,65 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
   return (
     <div className="page-entrance space-y-6">
       <div className="panel-card rounded-[24px] p-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="section-label mb-2">Client Settings</p>
-            <h2 className="text-2xl font-semibold tracking-tight text-content">Routing and runtime preferences</h2>
-            <p className="mt-2 text-sm text-content-secondary">
-              These settings are applied to imported configs and generated configs.
-            </p>
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-2xl">
+              <p className="section-label mb-2">Client Settings</p>
+              <h2 className="text-2xl font-semibold tracking-tight text-content">Routing and runtime preferences</h2>
+              <p className="mt-2 text-sm text-content-secondary">
+                These settings are applied to imported configs and generated configs.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <SettingsPill label="Mode" value={settings.tun_enabled ? "TUN enabled" : "Mixed inbound"} />
+              <SettingsPill label="DNS" value={settings.dns_final || "Unset"} />
+              <SettingsPill label="Port" value={String(settings.mixed_port)} />
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <SettingsPill label="Mode" value={settings.tun_enabled ? "TUN enabled" : "Mixed inbound"} />
-            <SettingsPill label="DNS" value={settings.dns_final || "Unset"} />
-            <SettingsPill label="Port" value={String(settings.mixed_port)} />
+
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+            <SettingsMetric
+              icon={<ArrowRightLeft size={16} />}
+              label="Autostart"
+              value={settings.autostart_enabled ? "On" : "Off"}
+              meta="Windows startup"
+              color="text-violet-500 dark:text-violet-400"
+              compact
+            />
+            <SettingsMetric
+              icon={<ArrowRightLeft size={16} />}
+              label="Inbound"
+              value={settings.mixed_listen}
+              meta={`:${settings.mixed_port}`}
+              color="text-sky-500 dark:text-sky-400"
+              compact
+            />
+            <SettingsMetric
+              icon={<Shield size={16} />}
+              label="TUN"
+              value={settings.tun_enabled ? "On" : "Off"}
+              meta={settings.tun_interface_name}
+              color="text-emerald-500 dark:text-emerald-400"
+              compact
+            />
+            <SettingsMetric
+              icon={<Globe size={16} />}
+              label="DNS"
+              value={settings.dns_final}
+              meta={settings.dns_strategy}
+              color="text-green-500 dark:text-green-400"
+              compact
+            />
+            <SettingsMetric
+              icon={<Database size={16} />}
+              label="Servers"
+              value={String(settings.dns_servers.length)}
+              meta="DNS entries"
+              color="text-orange-500 dark:text-orange-400"
+              compact
+            />
           </div>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <SettingsMetric
-          icon={<ArrowRightLeft size={16} />}
-          label="Autostart"
-          value={settings.autostart_enabled ? "On" : "Off"}
-          meta="Windows startup"
-          color="text-violet-500 dark:text-violet-400"
-        />
-        <SettingsMetric
-          icon={<ArrowRightLeft size={16} />}
-          label="Inbound"
-          value={settings.mixed_listen}
-          meta={`:${settings.mixed_port}`}
-          color="text-sky-500 dark:text-sky-400"
-        />
-        <SettingsMetric
-          icon={<Shield size={16} />}
-          label="TUN"
-          value={settings.tun_enabled ? "On" : "Off"}
-          meta={settings.tun_interface_name}
-          color="text-emerald-500 dark:text-emerald-400"
-        />
-        <SettingsMetric
-          icon={<Globe size={16} />}
-          label="DNS"
-          value={settings.dns_final}
-          meta={settings.dns_strategy}
-          color="text-green-500 dark:text-green-400"
-        />
-        <SettingsMetric
-          icon={<Database size={16} />}
-          label="Servers"
-          value={String(settings.dns_servers.length)}
-          meta="DNS entries"
-          color="text-orange-500 dark:text-orange-400"
-        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
@@ -310,22 +317,20 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
 
           {activeSection === "tun" && (
             <section className="space-y-4">
-              <div className="mb-4 flex items-start justify-between gap-4">
+              <div className="mb-4">
                 <div>
                   <h3 className="text-sm font-medium text-content">TUN</h3>
                   <p className="mt-1 text-xs text-content-secondary">
                     Adds or removes the TUN inbound in the active config.
                   </p>
                 </div>
-                <label className="flex items-center gap-2 text-sm text-content">
-                  <input
-                    type="checkbox"
-                    checked={settings.tun_enabled}
-                    onChange={(e) => updateSetting("tun_enabled", e.target.checked)}
-                  />
-                  Enable TUN mode
-                </label>
               </div>
+
+              <Toggle
+                label="Enable TUN mode"
+                checked={settings.tun_enabled}
+                onChange={(checked) => updateSetting("tun_enabled", checked)}
+              />
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Field label="Interface Name">
@@ -474,19 +479,21 @@ function SettingsMetric({
   value,
   meta,
   color,
+  compact = false,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   meta: string;
   color: string;
+  compact?: boolean;
 }) {
   return (
-    <div className="panel-card rounded-[22px] p-4">
-      <div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
-      <p className="truncate text-xl font-semibold tracking-tight text-content">{value}</p>
+    <div className={`rounded-[22px] border border-border/70 bg-surface-elevated/45 ${compact ? "px-4 py-3" : "panel-card p-4"}`}>
+      <div className={`${compact ? "mb-2.5" : "mb-3"} flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
+      <p className={`truncate font-semibold tracking-tight text-content ${compact ? "text-lg" : "text-xl"}`}>{value}</p>
       <p className="mt-1 text-[11px] uppercase tracking-[0.15em] text-content-secondary">{label}</p>
-      <p className="mt-2 truncate text-xs text-content-muted">{meta}</p>
+      <p className={`truncate text-xs text-content-muted ${compact ? "mt-1.5" : "mt-2"}`}>{meta}</p>
     </div>
   );
 }
