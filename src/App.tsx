@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import TitleBar from "./components/TitleBar";
 import Sidebar from "./components/Sidebar";
 import NodeList from "./components/NodeList";
@@ -14,9 +13,10 @@ import SettingsPanel from "./components/SettingsPanel";
 import RouteRuleModal from "./components/RouteRuleModal";
 import AboutPanel from "./components/AboutPanel";
 import StartupTipsModal from "./components/StartupTipsModal";
+import ImportProfileModal from "./components/ImportProfileModal";
 import { useSingbox } from "./hooks/useSingbox";
 import { useTheme } from "./hooks/useTheme";
-import { ConfigOverview, ProxyNode, RouteRuleInfo } from "./types";
+import { ConfigOverview, ImportValidationReport, ProxyNode, RouteRuleInfo } from "./types";
 
 type Page = "overview" | "nodes" | "logs" | "settings" | "about";
 
@@ -33,6 +33,7 @@ function App() {
   const [coreVersion, setCoreVersion] = useState("Detecting...");
   const [showStartupTips, setShowStartupTips] = useState(false);
   const [suppressStartupTips, setSuppressStartupTips] = useState(true);
+  const [showImportProfileModal, setShowImportProfileModal] = useState(false);
   const [editingConfigProfile, setEditingConfigProfile] = useState<{ id: string; name: string; value: string } | null>(null);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
@@ -99,16 +100,12 @@ function App() {
     loadOverview();
   }, [loadOverview, singbox.activeConfigProfileId]);
 
-  const handleImportConfig = useCallback(async () => {
-    try {
-      const selected = await openDialog({
-        multiple: false,
-        directory: false,
-        filters: [{ name: "sing-box profile", extensions: ["json"] }],
-      });
-      const filePath = Array.isArray(selected) ? selected[0] : selected;
-      if (!filePath) return;
+  const openImportProfileModal = useCallback(() => {
+    setShowImportProfileModal(true);
+  }, []);
 
+  const handleImportConfig = useCallback(async (filePath: string) => {
+    try {
       const result = await invoke<{
         overview: ConfigOverview;
         nodes: unknown[];
@@ -125,10 +122,10 @@ function App() {
     }
   }, [singbox]);
 
-  const handleImportConfigUrl = useCallback(async () => {
+  const handleImportConfigUrl = useCallback(async (value: string) => {
     try {
-      const url = window.prompt("Enter a sing-box profile URL:");
-      if (!url?.trim()) return;
+      const resolvedUrl = value.trim();
+      if (!resolvedUrl) return;
 
       const result = await invoke<{
         overview: ConfigOverview;
@@ -136,7 +133,7 @@ function App() {
         profiles: unknown[];
         active_node: string;
         active_outbound: string;
-      }>("import_config_url", { url: url.trim() });
+      }>("import_config_url", { url: resolvedUrl });
 
       setConfigOverview(result.overview);
       await singbox.onConfigImported(result.active_outbound || result.active_node);
@@ -145,6 +142,14 @@ function App() {
       singbox.setError(String(err));
     }
   }, [singbox]);
+
+  const handleValidateImportFile = useCallback(async (filePath: string) => {
+    return invoke<ImportValidationReport>("validate_import_file", { filePath });
+  }, []);
+
+  const handleValidateImportUrl = useCallback(async (url: string) => {
+    return invoke<ImportValidationReport>("validate_import_url", { url });
+  }, []);
 
   const handleEditRouteRule = useCallback((index: number, rule: RouteRuleInfo) => {
     setEditingRouteRule({ index, rule });
@@ -231,6 +236,20 @@ function App() {
     }
   }, [editingConfigProfile, loadOverview, singbox]);
 
+  const handleCopySubscriptionUrl = useCallback(async (profileId: string) => {
+    try {
+      const profile = singbox.configProfiles.find((item) => item.id === profileId);
+      if (!profile || profile.source_kind !== "url") {
+        throw new Error("This profile does not have an exportable subscription URL");
+      }
+
+      await navigator.clipboard.writeText(profile.source_path);
+      singbox.setError(null);
+    } catch (err) {
+      singbox.setError(String(err));
+    }
+  }, [singbox]);
+
   return (
     <div className="h-screen overflow-hidden bg-surface-base p-[clamp(0.25rem,0.55vw,0.375rem)]">
       <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[22px]">
@@ -243,11 +262,12 @@ function App() {
           currentPage={currentPage}
           onPageChange={setCurrentPage}
           isRunning={singbox.isRunning}
-          onImportConfig={handleImportConfig}
-          onImportConfigUrl={handleImportConfigUrl}
+          onImportProfile={openImportProfileModal}
           configProfiles={singbox.configProfiles}
           activeConfigProfileId={singbox.activeConfigProfileId}
           onSwitchConfigProfile={singbox.switchConfigProfile}
+          onRefreshConfigProfile={(profileId) => void singbox.refreshConfigProfile(profileId)}
+          onCopySubscriptionUrl={(profileId) => void handleCopySubscriptionUrl(profileId)}
           onDeleteConfigProfile={singbox.deleteConfigProfile}
           onEditConfigProfile={(profileId) => void handleOpenConfigProfileEditor(profileId)}
         />
@@ -264,6 +284,7 @@ function App() {
             nodes={singbox.nodes}
             profiles={singbox.profiles}
             runtimeDebug={singbox.runtimeDebug}
+            startupHealth={singbox.startupHealth}
             hasConfig={singbox.hasConfig}
             tunEnabled={configOverview?.inbounds.some((inbound) => inbound.inbound_type === "tun") ?? false}
             onToggle={singbox.toggleProxy}
@@ -284,18 +305,18 @@ function App() {
                 </div>
               ) : (
                 <div className="page-entrance flex h-full items-center justify-center">
-                  <div className="panel-card w-full max-w-xl rounded-[24px] p-6 text-center">
-                    <p className="section-label mb-2.5">Ready to configure</p>
+                  <div className="panel-card w-full max-w-lg rounded-[24px] p-5 text-center">
+                    <p className="section-label mb-2">Ready to configure</p>
                     <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">No configuration loaded</h2>
-                    <p className="mx-auto mt-2.5 max-w-md text-[13px] leading-5 text-content-secondary">
-                      Import a sing-box profile to inspect routes, manage nodes, and control proxy behavior from one workspace.
+                    <p className="mx-auto mt-2 max-w-md text-[13px] leading-5 text-content-secondary">
+                      Import a profile to inspect routes, manage nodes, and control sing-box from one workspace.
                     </p>
                     <button
-                      onClick={handleImportConfig}
-                      className="mt-5 rounded-2xl bg-primary-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                      onClick={openImportProfileModal}
+                      className="mt-4 rounded-2xl bg-primary-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                     >
-                    Import sing-box Config
-                  </button>
+                      Import Profile
+                    </button>
                   </div>
                 </div>
               )
@@ -372,6 +393,15 @@ function App() {
           onClose={handleDismissStartupTips}
         />
       )}
+
+      <ImportProfileModal
+        open={showImportProfileModal}
+        onClose={() => setShowImportProfileModal(false)}
+        onValidateFile={handleValidateImportFile}
+        onValidateUrl={handleValidateImportUrl}
+        onImportFile={(filePath) => handleImportConfig(filePath)}
+        onImportUrl={(url) => handleImportConfigUrl(url)}
+      />
     </div>
   );
 }

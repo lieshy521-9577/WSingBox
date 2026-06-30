@@ -79,8 +79,31 @@ export interface ConfigProfile {
   id: string;
   name: string;
   source_path: string;
+  source_kind: string;
+  refreshable: boolean;
   created_at: number;
   updated_at: number;
+}
+
+export interface ImportValidationReport {
+  source_kind: string;
+  display_name: string;
+  node_count: number;
+  group_count: number;
+  has_tun: boolean;
+  warnings: string[];
+}
+
+export interface StartupHealthItem {
+  key: string;
+  label: string;
+  status: string;
+  message: string;
+}
+
+export interface StartupHealthReport {
+  ready: boolean;
+  items: StartupHealthItem[];
 }
 
 /// Application state

@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use std::net::TcpListener;
 use std::path::Path;
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 #[cfg(windows)]
 use winreg::enums::HKEY_CURRENT_USER;
 #[cfg(windows)]
 use winreg::RegKey;
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Represents a proxy node configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +104,16 @@ pub struct RuntimeDebugSnapshot {
     pub active_leaf_outbound: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoreRuntimeInfo {
+    pub binary_path: String,
+    pub config_path: String,
+    pub log_path: String,
+    pub pid: Option<u32>,
+    pub running: bool,
+    pub tun_enabled: bool,
+}
+
 /// Persistent client settings applied to imported/generated configs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -135,8 +140,36 @@ pub struct ConfigProfile {
     pub id: String,
     pub name: String,
     pub source_path: String,
+    #[serde(default = "default_profile_source_kind")]
+    pub source_kind: String,
+    #[serde(default)]
+    pub refreshable: bool,
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportValidationReport {
+    pub source_kind: String,
+    pub display_name: String,
+    pub node_count: usize,
+    pub group_count: usize,
+    pub has_tun: bool,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupHealthItem {
+    pub key: String,
+    pub label: String,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupHealthReport {
+    pub ready: bool,
+    pub items: Vec<StartupHealthItem>,
 }
 
 /// Non-proxy outbound types that should NOT be extracted as nodes
@@ -211,6 +244,40 @@ pub async fn import_config_url(url: String) -> Result<ImportResult, String> {
     import_config_content(url, &content)
 }
 
+#[tauri::command]
+pub async fn validate_import_file(file_path: String) -> Result<ImportValidationReport, String> {
+    let content =
+        fs::read_to_string(&file_path).map_err(|e| format!("Failed to read config file: {}", e))?;
+    validate_import_content(&file_path, &content)
+}
+
+#[tauri::command]
+pub async fn validate_import_url(url: String) -> Result<ImportValidationReport, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("Profile URL is empty".to_string());
+    }
+
+    let response = reqwest::Client::builder()
+        .user_agent("SingBox Client/0.1.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch profile URL: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Profile URL returned HTTP {}", response.status()));
+    }
+
+    let content = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read profile response: {}", e))?;
+    validate_import_content(url, &content)
+}
+
 fn import_config_content(source_path: &str, content: &str) -> Result<ImportResult, String> {
     let config = parse_profile_config_content(content)?;
 
@@ -221,6 +288,50 @@ fn import_config_content(source_path: &str, content: &str) -> Result<ImportResul
 
     let profile = save_imported_config_profile(source_path, &config)?;
     activate_config_profile_internal(&profile.id)
+}
+
+fn validate_import_content(
+    source_path: &str,
+    content: &str,
+) -> Result<ImportValidationReport, String> {
+    let config = parse_profile_config_content(content)?;
+    let nodes = extract_nodes_from_config(&config);
+    let profiles = extract_profiles(&config);
+    let has_tun = config
+        .get("inbounds")
+        .and_then(|value| value.as_array())
+        .map(|inbounds| {
+            inbounds
+                .iter()
+                .any(|inbound| inbound.get("type").and_then(|value| value.as_str()) == Some("tun"))
+        })
+        .unwrap_or(false);
+    let mut warnings = Vec::new();
+
+    if nodes.is_empty() {
+        warnings.push("No direct proxy nodes were extracted from this profile".to_string());
+    }
+
+    if profiles.is_empty() {
+        warnings.push("No selector/urltest groups were found in this profile".to_string());
+    }
+
+    if config.get("outbounds").and_then(|value| value.as_array()).is_none() {
+        warnings.push("The profile has no outbounds array".to_string());
+    }
+
+    if has_tun {
+        warnings.push("TUN inbound detected. Starting this profile will require UAC elevation on Windows".to_string());
+    }
+
+    Ok(ImportValidationReport {
+        source_kind: profile_source_kind(source_path).to_string(),
+        display_name: derive_config_profile_name(source_path),
+        node_count: nodes.len(),
+        group_count: profiles.len(),
+        has_tun,
+        warnings,
+    })
 }
 
 fn parse_profile_config_content(content: &str) -> Result<serde_json::Value, String> {
@@ -253,7 +364,7 @@ fn parse_profile_config_content(content: &str) -> Result<serde_json::Value, Stri
 /// Get the current loaded config overview
 #[tauri::command]
 pub async fn get_config_overview() -> Result<Option<ConfigOverview>, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Ok(None);
     }
@@ -286,7 +397,7 @@ pub async fn get_app_settings() -> Result<AppSettings, String> {
         return Ok(settings);
     }
 
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
@@ -304,9 +415,9 @@ pub async fn get_app_settings() -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub async fn get_singbox_core_version() -> Result<String, String> {
-    let binary = super::singbox::find_singbox_binary_for_version()?;
-    let mut command = hidden_command(&binary);
-    let output = super::singbox::apply_deprecated_envs(&mut command)
+    let binary = crate::core_process::find_singbox_binary()?;
+    let mut command = crate::core_process::hidden_command(&binary);
+    let output = crate::core_process::apply_deprecated_envs(&mut command)
         .arg("version")
         .output()
         .map_err(|e| format!("Failed to query sing-box version: {}", e))?;
@@ -328,7 +439,7 @@ pub async fn save_app_settings(settings: AppSettings) -> Result<AppSettings, Str
     save_app_settings_file(&settings)?;
     sync_autostart(settings.autostart_enabled)?;
 
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
@@ -347,7 +458,7 @@ pub async fn save_app_settings(settings: AppSettings) -> Result<AppSettings, Str
 
 #[tauri::command]
 pub async fn get_rule_sets_json() -> Result<Vec<serde_json::Value>, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Ok(vec![]);
     }
@@ -367,7 +478,7 @@ pub async fn get_rule_sets_json() -> Result<Vec<serde_json::Value>, String> {
 
 #[tauri::command]
 pub async fn get_route_rules_json() -> Result<Vec<serde_json::Value>, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Ok(vec![]);
     }
@@ -387,7 +498,7 @@ pub async fn get_route_rules_json() -> Result<Vec<serde_json::Value>, String> {
 
 #[tauri::command]
 pub async fn save_route_rules_json(rules: Vec<serde_json::Value>) -> Result<String, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Err("No active config profile is loaded".to_string());
     }
@@ -423,7 +534,7 @@ pub async fn save_route_rules_json(rules: Vec<serde_json::Value>) -> Result<Stri
 
 #[tauri::command]
 pub async fn save_rule_sets_json(rule_sets: Vec<serde_json::Value>) -> Result<String, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Err("No active config profile is loaded".to_string());
     }
@@ -472,6 +583,55 @@ pub async fn get_active_config_profile() -> Result<String, String> {
 /// Switch the active imported config profile
 #[tauri::command]
 pub async fn switch_config_profile(profile_id: String) -> Result<ImportResult, String> {
+    activate_config_profile_internal(&profile_id)
+}
+
+#[tauri::command]
+pub async fn refresh_config_profile(profile_id: String) -> Result<ImportResult, String> {
+    let mut profiles = load_config_profiles()?;
+    let profile = profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
+
+    if !profile.refreshable || profile_source_kind(&profile.source_path) != "url" {
+        return Err("Only URL-based profiles can be refreshed".to_string());
+    }
+
+    let response = reqwest::Client::builder()
+        .user_agent("SingBox Client/0.1.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?
+        .get(profile.source_path.trim())
+        .send()
+        .await
+        .map_err(|e| format!("Failed to refresh profile URL: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Profile URL returned HTTP {}", response.status()));
+    }
+
+    let content = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read refreshed profile response: {}", e))?;
+    let config = parse_profile_config_content(&content)?;
+    let config = sanitize_config_for_v1_12(config);
+    let settings = load_app_settings().unwrap_or_else(|_| infer_settings_from_config(&config));
+    let config = apply_app_settings_to_config(config, &settings);
+
+    let profile_path = get_config_profiles_dir().join(format!("{}.json", profile.id));
+    let serialized = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize refreshed profile: {}", e))?;
+    fs::write(&profile_path, serialized)
+        .map_err(|e| format!("Failed to save refreshed profile: {}", e))?;
+
+    profile.name = derive_config_profile_name(&profile.source_path);
+    profile.source_kind = profile_source_kind(&profile.source_path).to_string();
+    profile.refreshable = true;
+    profile.updated_at = current_unix_timestamp();
+    save_config_profiles(&profiles)?;
+
     activate_config_profile_internal(&profile_id)
 }
 
@@ -576,7 +736,7 @@ pub async fn save_config_profile_json(
 /// Get saved profiles
 #[tauri::command]
 pub async fn get_profiles() -> Result<Vec<Profile>, String> {
-    let path = get_config_dir().join("profiles.json");
+    let path = crate::app_paths::profiles_file_path();
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -588,7 +748,7 @@ pub async fn get_profiles() -> Result<Vec<Profile>, String> {
 /// Get the currently selected outbound tag from the imported config
 #[tauri::command]
 pub async fn get_active_outbound() -> Result<String, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Ok(String::new());
     }
@@ -605,7 +765,7 @@ pub async fn get_active_outbound() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn get_runtime_debug_snapshot() -> Result<RuntimeDebugSnapshot, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Ok(RuntimeDebugSnapshot {
             route_final: String::new(),
@@ -647,10 +807,36 @@ pub async fn get_runtime_debug_snapshot() -> Result<RuntimeDebugSnapshot, String
     })
 }
 
+#[tauri::command]
+pub async fn get_core_runtime_info() -> Result<CoreRuntimeInfo, String> {
+    let binary_path = crate::core_process::find_singbox_binary().unwrap_or_default();
+    let state = crate::core_process::load_core_state().ok().flatten();
+    let running = crate::core_process::is_singbox_running().unwrap_or(false);
+
+    Ok(CoreRuntimeInfo {
+        binary_path: state
+            .as_ref()
+            .map(|item| item.binary_path.clone())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(binary_path),
+        config_path: state
+            .as_ref()
+            .map(|item| item.config_path.clone())
+            .unwrap_or_else(|| crate::app_paths::runtime_config_path().to_string_lossy().to_string()),
+        log_path: state
+            .as_ref()
+            .map(|item| item.log_path.clone())
+            .unwrap_or_else(|| crate::app_paths::runtime_log_path().to_string_lossy().to_string()),
+        pid: state.as_ref().and_then(|item| item.pid),
+        running,
+        tun_enabled: state.as_ref().map(|item| item.tun_enabled).unwrap_or(false),
+    })
+}
+
 /// Set the active outbound selection in the imported config by updating selector defaults
 #[tauri::command]
 pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Err("No imported config is loaded".to_string());
     }
@@ -733,7 +919,7 @@ pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
 /// Remove an outbound group from the imported config and refresh saved profiles/nodes
 #[tauri::command]
 pub async fn remove_group(group_tag: String) -> Result<String, String> {
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if !config_path.exists() {
         return Err("No imported config is loaded".to_string());
     }
@@ -1323,7 +1509,7 @@ pub async fn remove_node(id: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn generate_config(selected_node_id: String) -> Result<String, String> {
     // If we have an imported config, just use it directly
-    let config_path = get_config_dir().join("config.json");
+    let config_path = crate::app_paths::runtime_config_path();
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
@@ -1386,6 +1572,92 @@ pub async fn clear_config() -> Result<String, String> {
     }
 
     Ok("All imported profiles cleared".to_string())
+}
+
+#[tauri::command]
+pub async fn get_startup_health_report() -> Result<StartupHealthReport, String> {
+    let mut items = Vec::new();
+
+    match crate::core_process::find_singbox_binary() {
+        Ok(path) => items.push(StartupHealthItem {
+            key: "core".to_string(),
+            label: "Core binary".to_string(),
+            status: "ok".to_string(),
+            message: path,
+        }),
+        Err(err) => items.push(StartupHealthItem {
+            key: "core".to_string(),
+            label: "Core binary".to_string(),
+            status: "error".to_string(),
+            message: err,
+        }),
+    }
+
+    let config_path = crate::app_paths::runtime_config_path();
+    let has_runtime_config = config_path.exists();
+    items.push(StartupHealthItem {
+        key: "config".to_string(),
+        label: "Runtime config".to_string(),
+        status: if has_runtime_config { "ok" } else { "error" }.to_string(),
+        message: if has_runtime_config {
+            config_path.to_string_lossy().to_string()
+        } else {
+            "No imported or generated config is ready".to_string()
+        },
+    });
+
+    if has_runtime_config {
+        let content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read runtime config: {}", e))?;
+        let config: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse runtime config: {}", e))?;
+        let (host, port) = get_mixed_inbound_endpoint_from_config(&config)?;
+        let tun_enabled = config_has_tun_inbound_value(&config);
+        let port_free = port_is_available(&host, port);
+        let nodes = extract_nodes_from_config(&config);
+        let groups = extract_profiles(&config);
+
+        items.push(StartupHealthItem {
+            key: "mixed_port".to_string(),
+            label: "Mixed inbound".to_string(),
+            status: if port_free { "ok" } else { "error" }.to_string(),
+            message: if port_free {
+                format!("{}:{} is available", host, port)
+            } else {
+                format!("{}:{} is already occupied", host, port)
+            },
+        });
+
+        items.push(StartupHealthItem {
+            key: "tun".to_string(),
+            label: "TUN requirement".to_string(),
+            status: if tun_enabled { "warn" } else { "ok" }.to_string(),
+            message: if tun_enabled {
+                "Active profile contains TUN inbound and will require UAC elevation".to_string()
+            } else {
+                "No TUN inbound in active runtime config".to_string()
+            },
+        });
+
+        items.push(StartupHealthItem {
+            key: "routing".to_string(),
+            label: "Routing targets".to_string(),
+            status: if nodes.is_empty() && groups.is_empty() {
+                "error"
+            } else {
+                "ok"
+            }
+            .to_string(),
+            message: if nodes.is_empty() && groups.is_empty() {
+                "No selectable nodes or groups were extracted from the active profile".to_string()
+            } else {
+                format!("{} nodes, {} groups ready", nodes.len(), groups.len())
+            },
+        });
+    }
+
+    let ready = items.iter().all(|item| item.status != "error");
+    Ok(StartupHealthReport { ready, items })
 }
 
 fn build_singbox_config(node: &ProxyNode) -> serde_json::Value {
@@ -1778,34 +2050,24 @@ fn summarize_route_rule(rule: &serde_json::Value) -> String {
     parts.join(" • ")
 }
 
-fn get_config_dir() -> std::path::PathBuf {
-    let home = dirs::home_dir().unwrap_or_default();
-    let config_dir = home.join(".singbox-client");
-    fs::create_dir_all(&config_dir).ok();
-    config_dir
-}
-
 fn get_config_profiles_dir() -> std::path::PathBuf {
-    let dir = get_config_dir().join("profiles-store");
-    fs::create_dir_all(&dir).ok();
-    dir
+    crate::app_paths::profiles_store_dir()
 }
 
 fn get_settings_file_path() -> std::path::PathBuf {
-    get_config_dir().join("settings.json")
+    crate::app_paths::settings_file_path()
 }
 
 fn get_config_profiles_file_path() -> std::path::PathBuf {
-    get_config_dir().join("config-profiles.json")
+    crate::app_paths::config_profiles_file_path()
 }
 
 fn get_active_config_profile_file_path() -> std::path::PathBuf {
-    get_config_dir().join("active-profile.txt")
+    crate::app_paths::active_profile_file_path()
 }
 
 fn get_nodes_file_path() -> String {
-    get_config_dir()
-        .join("nodes.json")
+    crate::app_paths::nodes_file_path()
         .to_string_lossy()
         .to_string()
 }
@@ -1821,7 +2083,7 @@ fn save_nodes(nodes: &[ProxyNode]) -> Result<(), String> {
 fn save_profiles(profiles: &[Profile]) -> Result<(), String> {
     let content = serde_json::to_string_pretty(profiles)
         .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
-    let path = get_config_dir().join("profiles.json");
+    let path = crate::app_paths::profiles_file_path();
     fs::write(&path, content).map_err(|e| format!("Failed to save profiles: {}", e))?;
     Ok(())
 }
@@ -1834,7 +2096,17 @@ fn load_config_profiles() -> Result<Vec<ConfigProfile>, String> {
 
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read config profiles: {}", e))?;
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse config profiles: {}", e))
+    let mut profiles: Vec<ConfigProfile> =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config profiles: {}", e))?;
+
+    for profile in &mut profiles {
+        if profile.source_kind.trim().is_empty() {
+            profile.source_kind = profile_source_kind(&profile.source_path).to_string();
+        }
+        profile.refreshable = profile.source_kind == "url";
+    }
+
+    Ok(profiles)
 }
 
 fn save_config_profiles(profiles: &[ConfigProfile]) -> Result<(), String> {
@@ -1899,6 +2171,8 @@ fn save_imported_config_profile(
         id: id.clone(),
         name,
         source_path: source_path.to_string(),
+        source_kind: profile_source_kind(source_path).to_string(),
+        refreshable: profile_source_kind(source_path) == "url",
         created_at: now,
         updated_at: now,
     };
@@ -1917,7 +2191,7 @@ fn save_imported_config_profile(
 }
 
 fn derive_config_profile_name(source_path: &str) -> String {
-    if let Ok(url) = reqwest::Url::parse(source_path) {
+    if let Some(url) = parse_subscription_url(source_path) {
         if let Some(fragment) = url.fragment() {
             let decoded = percent_encoding::percent_decode_str(fragment)
                 .decode_utf8()
@@ -1956,6 +2230,26 @@ fn derive_config_profile_name(source_path: &str) -> String {
         .to_string()
 }
 
+fn default_profile_source_kind() -> String {
+    "file".to_string()
+}
+
+fn profile_source_kind(source_path: &str) -> &'static str {
+    if parse_subscription_url(source_path).is_some() {
+        "url"
+    } else {
+        "file"
+    }
+}
+
+fn parse_subscription_url(source_path: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(source_path).ok()?;
+    match url.scheme() {
+        "http" | "https" => Some(url),
+        _ => None,
+    }
+}
+
 fn activate_config_profile_internal(profile_id: &str) -> Result<ImportResult, String> {
     let profiles = load_config_profiles()?;
     let profile = profiles
@@ -1969,7 +2263,7 @@ fn activate_config_profile_internal(profile_id: &str) -> Result<ImportResult, St
     let config: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse saved profile config: {}", e))?;
 
-    let runtime_config_path = get_config_dir().join("config.json");
+    let runtime_config_path = crate::app_paths::runtime_config_path();
     let runtime_content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize runtime config: {}", e))?;
     fs::write(&runtime_config_path, runtime_content)
@@ -1993,14 +2287,60 @@ fn activate_config_profile_internal(profile_id: &str) -> Result<ImportResult, St
 }
 
 fn clear_runtime_config_files() -> Result<(), String> {
-    let config_dir = get_config_dir();
-    for file_name in ["config.json", "nodes.json", "profiles.json"] {
-        let path = config_dir.join(file_name);
+    for path in [
+        crate::app_paths::runtime_config_path(),
+        crate::app_paths::nodes_file_path(),
+        crate::app_paths::profiles_file_path(),
+    ] {
         if path.exists() {
-            fs::remove_file(&path).map_err(|e| format!("Failed to remove {}: {}", file_name, e))?;
+            let label = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("runtime file");
+            fs::remove_file(&path).map_err(|e| format!("Failed to remove {}: {}", label, e))?;
         }
     }
     Ok(())
+}
+
+fn port_is_available(host: &str, port: u16) -> bool {
+    TcpListener::bind((host, port)).is_ok()
+}
+
+fn get_mixed_inbound_endpoint_from_config(config: &serde_json::Value) -> Result<(String, u16), String> {
+    let mixed = config
+        .get("inbounds")
+        .and_then(|value| value.as_array())
+        .and_then(|inbounds| {
+            inbounds
+                .iter()
+                .find(|inbound| inbound.get("type").and_then(|value| value.as_str()) == Some("mixed"))
+        })
+        .ok_or("No mixed inbound found in active runtime config".to_string())?;
+
+    let host = mixed
+        .get("listen")
+        .and_then(|value| value.as_str())
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let port = mixed
+        .get("listen_port")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(7890) as u16;
+
+    Ok((host, port))
+}
+
+fn config_has_tun_inbound_value(config: &serde_json::Value) -> bool {
+    config
+        .get("inbounds")
+        .and_then(|value| value.as_array())
+        .map(|inbounds| {
+            inbounds
+                .iter()
+                .any(|inbound| inbound.get("type").and_then(|value| value.as_str()) == Some("tun"))
+        })
+        .unwrap_or(false)
 }
 
 fn current_unix_timestamp() -> u64 {
@@ -2312,13 +2652,6 @@ fn is_autostart_enabled() -> Result<bool, String> {
     {
         Ok(false)
     }
-}
-
-fn hidden_command(program: &str) -> Command {
-    let mut command = Command::new(program);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
 }
 
 /// Sanitize config for sing-box 1.12.0 compatibility:

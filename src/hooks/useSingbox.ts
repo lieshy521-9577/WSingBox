@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ConfigProfile, ProxyNode } from "../types";
+import { listen } from "@tauri-apps/api/event";
+import { ConfigProfile, ProxyNode, StartupHealthReport } from "../types";
 
 export interface Profile {
   tag: string;
@@ -18,6 +19,11 @@ export interface RuntimeDebugSnapshot {
   active_leaf_outbound: string;
 }
 
+interface CoreEventPayload {
+  status: string;
+  message: string;
+}
+
 export function useSingbox() {
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -31,6 +37,7 @@ export function useSingbox() {
   const [loading, setLoading] = useState(false);
   const [switchStatus, setSwitchStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [startupHealth, setStartupHealth] = useState<StartupHealthReport | null>(null);
 
   const syncTrayConnectionState = useCallback(async (connected: boolean) => {
     try {
@@ -57,6 +64,7 @@ export function useSingbox() {
     loadActiveOutbound();
     loadRuntimeDebug();
     loadActiveConfigProfile();
+    loadStartupHealth();
   }, []);
 
   const loadNodes = useCallback(async () => {
@@ -135,6 +143,17 @@ export function useSingbox() {
       setActiveConfigProfileId(id || null);
     } catch (err) {
       console.error("Failed to load active config profile:", err);
+    }
+  }, []);
+
+  const loadStartupHealth = useCallback(async () => {
+    try {
+      const report = await invoke<StartupHealthReport>("get_startup_health_report");
+      setStartupHealth(report);
+      return report;
+    } catch (err) {
+      console.error("Failed to load startup health report:", err);
+      return null;
     }
   }, []);
 
@@ -245,6 +264,7 @@ export function useSingbox() {
       await loadRuntimeDebug();
       await loadActiveConfigProfile();
       await loadActiveOutbound();
+      await loadStartupHealth();
       await checkStatus();
       setHasConfig(true);
       setSelectedOutboundTag(result.active_outbound || null);
@@ -255,7 +275,7 @@ export function useSingbox() {
     } finally {
       setLoading(false);
     }
-  }, [checkStatus, isRunning, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
+  }, [checkStatus, isRunning, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, loadStartupHealth, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const deleteConfigProfile = useCallback(async (profileId: string) => {
     try {
@@ -269,12 +289,13 @@ export function useSingbox() {
       await loadRuntimeDebug();
       await loadActiveConfigProfile();
       await loadActiveOutbound();
+      await loadStartupHealth();
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
+  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, loadStartupHealth]);
 
   const renameConfigProfile = useCallback(async (profileId: string, newName: string) => {
     try {
@@ -289,6 +310,30 @@ export function useSingbox() {
       setLoading(false);
     }
   }, [loadConfigProfiles]);
+
+  const refreshConfigProfile = useCallback(async (profileId: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      setSwitchStatus("Refreshing profile...");
+      const result = await invoke<{ active_outbound: string }>("refresh_config_profile", { profileId });
+      await loadNodes();
+      await loadProfiles();
+      await loadConfigProfiles();
+      await loadRuntimeDebug();
+      await loadActiveConfigProfile();
+      await loadActiveOutbound();
+      await loadStartupHealth();
+      setSelectedOutboundTag(result.active_outbound || null);
+      showTransientSwitchStatus("Profile refreshed");
+    } catch (err) {
+      setSwitchStatus(null);
+      setError(String(err));
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, loadStartupHealth, showTransientSwitchStatus]);
 
   const selectOutboundTag = useCallback(async (tag: string) => {
     try {
@@ -330,6 +375,14 @@ export function useSingbox() {
       setSwitchStatus("Starting sing-box...");
 
       if (hasConfig) {
+        const health = await loadStartupHealth();
+        if (health && !health.ready) {
+          const firstError = health.items.find((item) => item.status === "error");
+          setError(firstError?.message || "Startup health check failed");
+          setSwitchStatus(null);
+          setLoading(false);
+          return;
+        }
         if (selectedOutboundTag) {
           const actual = await invoke<string>("set_active_outbound", { targetTag: selectedOutboundTag });
           setSelectedOutboundTag(actual || null);
@@ -352,6 +405,14 @@ export function useSingbox() {
           return;
         }
         await invoke("generate_config", { selectedNodeId: selectedOutboundTag });
+        const health = await loadStartupHealth();
+        if (health && !health.ready) {
+          const firstError = health.items.find((item) => item.status === "error");
+          setError(firstError?.message || "Startup health check failed");
+          setSwitchStatus(null);
+          setLoading(false);
+          return;
+        }
         await invoke<string>("start_singbox");
         setIsRunning(true);
         setProxyEnabled(true);
@@ -364,7 +425,7 @@ export function useSingbox() {
     } finally {
       setLoading(false);
     }
-  }, [selectedOutboundTag, hasConfig, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
+  }, [selectedOutboundTag, hasConfig, loadProfiles, loadRuntimeDebug, loadStartupHealth, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const stopProxy = useCallback(async () => {
     try {
@@ -400,10 +461,63 @@ export function useSingbox() {
     await loadActiveOutbound();
     await loadRuntimeDebug();
     await loadActiveConfigProfile();
+    await loadStartupHealth();
     if (activeOutbound) {
       setSelectedOutboundTag(activeOutbound);
     }
-  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug]);
+  }, [checkConfig, loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, loadStartupHealth]);
+
+  useEffect(() => {
+    let unlistenStarting: (() => void) | undefined;
+    let unlistenReady: (() => void) | undefined;
+    let unlistenFailed: (() => void) | undefined;
+    let unlistenStopped: (() => void) | undefined;
+
+    const setup = async () => {
+      unlistenStarting = await listen<CoreEventPayload>("core-starting", (event) => {
+        setLoading(true);
+        setSwitchStatus(event.payload.message || "Starting sing-box...");
+      });
+
+      unlistenReady = await listen<CoreEventPayload>("core-ready", async (event) => {
+        setIsRunning(true);
+        setLoading(false);
+        setError(null);
+        setProxyEnabled(true);
+        setSwitchStatus(event.payload.message || "Sing-box ready");
+        await syncTrayConnectionState(true);
+        await Promise.allSettled([checkStatus(), loadRuntimeDebug(), loadActiveOutbound()]);
+      });
+
+      unlistenFailed = await listen<CoreEventPayload>("core-failed", async (event) => {
+        setIsRunning(false);
+        setLoading(false);
+        setProxyEnabled(false);
+        setSwitchStatus(null);
+        setError(event.payload.message || "sing-box failed to start");
+        await syncTrayConnectionState(false);
+        await Promise.allSettled([checkStatus(), loadRuntimeDebug()]);
+      });
+
+      unlistenStopped = await listen<CoreEventPayload>("core-stopped", async (event) => {
+        setIsRunning(false);
+        setLoading(false);
+        setProxyEnabled(false);
+        setSwitchStatus(event.payload.message || "sing-box stopped");
+        await syncTrayConnectionState(false);
+        await Promise.allSettled([checkStatus(), loadRuntimeDebug()]);
+      });
+    };
+
+    void setup();
+
+    return () => {
+      unlistenStarting?.();
+      unlistenReady?.();
+      unlistenFailed?.();
+      unlistenStopped?.();
+    };
+  }, [checkStatus, loadActiveOutbound, loadRuntimeDebug, syncTrayConnectionState]);
 
   return {
     nodes,
@@ -414,6 +528,7 @@ export function useSingbox() {
     proxyEnabled,
     selectedOutboundTag,
     runtimeDebug,
+    startupHealth,
     hasConfig,
     loading,
     switchStatus,
@@ -426,11 +541,13 @@ export function useSingbox() {
     switchConfigProfile,
     deleteConfigProfile,
     renameConfigProfile,
+    refreshConfigProfile,
     startProxy,
     stopProxy,
     toggleProxy,
     loadNodes,
     loadConfigProfiles,
+    loadStartupHealth,
     checkStatus,
     setError,
     onConfigImported,

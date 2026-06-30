@@ -448,12 +448,22 @@ html.dark .status-chip-primary {
     linear-gradient(180deg, rgba(248, 251, 255, 0.92), rgba(240, 245, 251, 0.9));
 }
 
+.modal-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 253, 0.96));
+}
+
 html.dark .workspace-shell {
   border-color: rgb(51 65 85 / 0.8);
   background:
     linear-gradient(180deg, rgba(12, 21, 37, 0.95), rgba(16, 27, 45, 0.96));
   box-shadow:
     0 28px 70px rgba(2, 6, 23, 0.36);
+}
+
+html.dark .modal-shell {
+  background:
+    linear-gradient(180deg, rgba(12, 21, 37, 0.98), rgba(16, 27, 45, 0.98));
 }
 
 .page-entrance {
@@ -495,6 +505,138 @@ html.dark .workspace-shell {
   .subtle-row:hover {
     transform: none;
   }
+}
+
+@media (max-height: 780px) {
+  .panel-shell {
+    border-radius: 18px;
+  }
+
+  .panel-card {
+    box-shadow:
+      0 10px 24px rgba(15, 23, 42, 0.04),
+      inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  }
+
+  .status-pill {
+    padding: 0.3rem 0.62rem;
+    font-size: 0.68rem;
+  }
+
+  .overview-subtab {
+    min-height: 2.55rem;
+    padding: 0.58rem 0.72rem;
+  }
+
+  .mode-toggle-button {
+    padding: 0.34rem 0.62rem;
+  }
+
+  .profile-row-meta {
+    display: none;
+  }
+
+  .profile-row button {
+    min-height: 0;
+  }
+
+  .session-helper-copy {
+    display: none;
+  }
+
+  .runtime-health-strip {
+    display: none;
+  }
+
+  .about-header-actions .status-pill,
+  .about-header-actions .btn-secondary {
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+  }
+
+  .about-diagnostics-actions .btn-secondary {
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+  }
+}
+
+@media (max-height: 720px) {
+  .section-label {
+    font-size: 0.62rem;
+  }
+
+  .status-chip {
+    min-width: 1.7rem;
+    padding: 0.16rem 0.5rem;
+    font-size: 0.64rem;
+  }
+
+  .status-pill {
+    padding: 0.26rem 0.55rem;
+    font-size: 0.64rem;
+  }
+
+  .overview-subtab {
+    min-height: 2.35rem;
+    padding: 0.48rem 0.65rem;
+    font-size: 0.76rem;
+  }
+
+  .mode-toggle-button {
+    padding: 0.28rem 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  .modal-shell {
+    max-height: min(92vh, 920px);
+  }
+
+  .profile-row-actions {
+    opacity: 1;
+  }
+
+  .session-helper-copy {
+    display: none;
+  }
+
+  .runtime-health-strip {
+    display: none;
+  }
+
+  .about-header-actions {
+    gap: 0.35rem;
+  }
+
+  .about-header-actions .btn-secondary,
+  .about-diagnostics-actions .btn-secondary {
+    padding-inline: 0.75rem;
+    font-size: 0.75rem;
+  }
+}
+
+@media (max-width: 1280px) {
+  .profile-row-meta {
+    display: none;
+  }
+
+  .runtime-health-strip {
+    display: none;
+  }
+
+  .about-header-actions,
+  .about-diagnostics-actions {
+    gap: 0.35rem;
+  }
+
+  .about-header-actions .btn-secondary,
+  .about-diagnostics-actions .btn-secondary {
+    padding-inline: 0.75rem;
+  }
+}
+
+html.dark .profile-row-actions {
+  border-color: rgb(51 65 85 / 0.92);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.28);
 }
 
 /* Custom scrollbar */

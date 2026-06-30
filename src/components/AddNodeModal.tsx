@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check } from "lucide-react";
 import { ProtocolType, PROTOCOL_LABELS, ProxyNode } from "../types";
+import ModalShell from "./ModalShell";
 
 interface AddNodeModalProps {
   onClose: () => void;
@@ -51,6 +52,7 @@ function AddNodeModal({ onClose, onSubmit, initialNode = null }: AddNodeModalPro
     }
 
     setLoading(true);
+    setError("");
     try {
       await onSubmit(name, nodeType, server, port, settings);
       onClose();
@@ -72,126 +74,131 @@ function AddNodeModal({ onClose, onSubmit, initialNode = null }: AddNodeModalPro
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-surface-base border border-border rounded-xl w-[480px] max-h-[80vh] overflow-auto shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <h3 className="text-base font-semibold text-content">
-            {initialNode ? "Edit Proxy Node" : "Add Proxy Node"}
-          </h3>
+    <ModalShell
+      open
+      size="wide"
+      label={initialNode ? "Edit Proxy Node" : "Add Proxy Node"}
+      title={initialNode ? "Update outbound node" : "Create outbound node"}
+      description="Keep the primary fields visible, then paste protocol-specific JSON only when needed."
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 rounded hover:bg-surface-elevated text-content-secondary"
+            className="btn-secondary rounded-2xl px-4 py-2 text-sm"
           >
-            <X size={16} />
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="proxy-node-form"
+            disabled={loading}
+            className="btn-primary rounded-2xl px-4 py-2 text-sm font-medium disabled:opacity-50"
+          >
+            {loading ? (initialNode ? "Saving..." : "Adding...") : initialNode ? "Save Node" : "Add Node"}
           </button>
         </div>
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          {/* Name */}
-          <div>
-            <label className="block text-xs text-content-secondary mb-1">Node Name *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Server"
-              className="w-full px-3 py-2 bg-surface-elevated border border-border rounded-lg text-sm text-content placeholder-content-muted focus:outline-none focus:border-primary-500"
-            />
-          </div>
-
-          {/* Protocol */}
-          <div>
-            <label className="block text-xs text-content-secondary mb-1">Protocol *</label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {Object.entries(PROTOCOL_LABELS).map(([key, label]) => {
-                const active = nodeType === key;
-
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => {
-                      const type = key as ProtocolType;
-                      setNodeType(type);
-                      setSettingsJson(settingsHints[type] || "{}");
-                    }}
-                    className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition-all ${
-                      active
-                        ? "border-primary-500/40 bg-primary-600/12 text-primary-200 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.16)]"
-                        : "border-border bg-surface-elevated text-content-secondary hover:bg-surface-subtle hover:text-content"
-                    }`}
-                  >
-                    <span className="truncate">{label}</span>
-                    {active && <Check size={14} className="shrink-0 text-primary-300" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Server & Port */}
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="block text-xs text-content-secondary mb-1">Server *</label>
+      }
+    >
+      <form id="proxy-node-form" onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="space-y-4">
+            <Field label="Node Name *">
               <input
                 type="text"
-                value={server}
-                onChange={(e) => setServer(e.target.value)}
-                placeholder="example.com"
-                className="w-full px-3 py-2 bg-surface-elevated border border-border rounded-lg text-sm text-content placeholder-content-muted focus:outline-none focus:border-primary-500"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="My Server"
+                className="input"
               />
+            </Field>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_6.25rem] gap-3">
+              <Field label="Server *">
+                <input
+                  type="text"
+                  value={server}
+                  onChange={(e) => setServer(e.target.value)}
+                  placeholder="example.com"
+                  className="input"
+                />
+              </Field>
+              <Field label="Port *">
+                <input
+                  type="number"
+                  value={port}
+                  onChange={(e) => setPort(Number(e.target.value))}
+                  className="input"
+                />
+              </Field>
             </div>
-            <div className="w-24">
-              <label className="block text-xs text-content-secondary mb-1">Port *</label>
-              <input
-                type="number"
-                value={port}
-                onChange={(e) => setPort(Number(e.target.value))}
-                className="w-full px-3 py-2 bg-surface-elevated border border-border rounded-lg text-sm text-content focus:outline-none focus:border-primary-500"
+
+            {error && (
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500 dark:text-red-300">
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs text-content-secondary">Protocol *</label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {Object.entries(PROTOCOL_LABELS).map(([key, label]) => {
+                  const active = nodeType === key;
+
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        const type = key as ProtocolType;
+                        setNodeType(type);
+                        setSettingsJson(settingsHints[type] || "{}");
+                      }}
+                      className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition-all ${
+                        active
+                          ? "border-primary-500/40 bg-primary-600/12 text-primary-200 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.16)]"
+                          : "border-border bg-surface-elevated text-content-secondary hover:bg-surface-subtle hover:text-content"
+                      }`}
+                    >
+                      <span className="truncate">{label}</span>
+                      {active && <Check size={14} className="shrink-0 text-primary-300" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Field label="Protocol Settings (JSON)">
+              <textarea
+                value={settingsJson}
+                onChange={(e) => setSettingsJson(e.target.value)}
+                rows={10}
+                className="input min-h-60 resize-y font-mono text-xs"
+                spellCheck={false}
               />
-            </div>
+            </Field>
           </div>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
 
-          {/* Protocol-specific settings */}
-          <div>
-            <label className="block text-xs text-content-secondary mb-1">
-              Protocol Settings (JSON)
-            </label>
-            <textarea
-              value={settingsJson}
-              onChange={(e) => setSettingsJson(e.target.value)}
-              rows={6}
-              className="w-full px-3 py-2 bg-surface-elevated border border-border rounded-lg text-xs text-content font-mono placeholder-content-muted focus:outline-none focus:border-primary-500 resize-none"
-            />
-          </div>
-
-          {/* Error */}
-          {error && (
-            <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
-          )}
-
-          {/* Actions */}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-content-secondary hover:text-content transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
-            >
-              {loading ? (initialNode ? "Saving..." : "Adding...") : (initialNode ? "Save Node" : "Add Node")}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs text-content-secondary">{label}</span>
+      {children}
+    </label>
   );
 }
 

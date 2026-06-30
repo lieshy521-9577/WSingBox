@@ -1,26 +1,12 @@
 use crate::apply_tray_icon;
+use crate::{app_paths, core_process};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::fs::OpenOptions;
 use std::net::TcpStream;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::process::Command;
-use std::process::Stdio;
 use std::thread;
 use std::time::Duration;
-use tauri::Manager;
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-const DEPRECATED_ENV_VARS: [(&str, &str); 6] = [
-    ("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true"),
-    ("ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM", "true"),
-    ("ENABLE_DEPRECATED_MISSING_DOMAIN_RESOLVER", "true"),
-    ("ENABLE_DEPRECATED_NETWORK_INTERFACE_ADDRESS", "true"),
-    ("ENABLE_DEPRECATED_DEFAULT_INTERFACE_ADDRESS", "true"),
-    ("ENABLE_DEPRECATED_LEGACY_OOM_KILLER", "true"),
-];
+use tauri::{Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ProxyStateSnapshot {
@@ -37,25 +23,45 @@ pub struct RuntimeLogEntry {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct CoreEventPayload {
+    status: String,
+    message: String,
+}
+
 /// Start sing-box core process with elevation (admin privileges for TUN)
 #[tauri::command]
 pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let config_dir = get_config_dir();
-    let config_path = format!("{}\\config.json", config_dir);
-    let bootstrap_config_path = format!("{}\\config.bootstrap.json", config_dir);
+    let _ = app_handle.emit(
+        "core-starting",
+        CoreEventPayload {
+            status: "starting".to_string(),
+            message: "Starting sing-box...".to_string(),
+        },
+    );
 
-    if !std::path::Path::new(&config_path).exists() {
-        return Err(
-            "Configuration file not found. Please import a config or add nodes first.".to_string(),
+    let config_path = app_paths::runtime_config_path();
+    let bootstrap_config_path = app_paths::runtime_bootstrap_config_path();
+
+    if !config_path.exists() {
+        let message =
+            "Configuration file not found. Please import a config or add nodes first.".to_string();
+        let _ = app_handle.emit(
+            "core-failed",
+            CoreEventPayload {
+                status: "failed".to_string(),
+                message: message.clone(),
+            },
         );
+        return Err(message);
     }
 
-    prepare_runtime_config_for_bootstrap(&config_path)?;
+    prepare_runtime_config_for_bootstrap(&config_path.to_string_lossy())?;
     let _ = fs::remove_file(&bootstrap_config_path);
 
-    let singbox_path = find_singbox_binary(&app_handle)?;
+    let singbox_path = core_process::find_singbox_binary_with_app(&app_handle)?;
 
-    hidden_command("taskkill")
+    core_process::hidden_command("taskkill")
         .args(["/F", "/IM", "sing-box.exe"])
         .output()
         .ok();
@@ -64,15 +70,19 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
     clear_runtime_log_file().ok();
 
-    let tun_enabled = config_has_tun_inbound(&config_path)?;
+    let tun_enabled = config_has_tun_inbound(&config_path.to_string_lossy())?;
     let log_path = get_runtime_log_file_path();
-    let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path)?;
+    let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path.to_string_lossy())?;
     let mut started_with_fallback = false;
     let mut started = false;
-    let mut startup_config_path = config_path.clone();
+    let mut startup_config_path = config_path.to_string_lossy().to_string();
 
-    if build_rule_set_bootstrap_config(&config_path, &bootstrap_config_path, Some("direct"))? {
-        startup_config_path = bootstrap_config_path.clone();
+    if build_rule_set_bootstrap_config(
+        &config_path.to_string_lossy(),
+        &bootstrap_config_path.to_string_lossy(),
+        Some("direct"),
+    )? {
+        startup_config_path = bootstrap_config_path.to_string_lossy().to_string();
     }
 
     launch_singbox_with_config(&singbox_path, &startup_config_path, &log_path, tun_enabled)?;
@@ -81,21 +91,21 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
         started = true;
     } else {
         let details = get_runtime_start_failure_details().unwrap_or_default();
-        let has_remote_rule_sets = config_has_remote_rule_sets(&config_path);
+        let has_remote_rule_sets = config_has_remote_rule_sets(&config_path.to_string_lossy());
         let should_retry_rule_set_bootstrap =
             should_retry_without_remote_rule_sets(&details) || has_remote_rule_sets;
 
         if should_retry_rule_set_bootstrap {
             let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(
-                &config_path,
-                &bootstrap_config_path,
+                &config_path.to_string_lossy(),
+                &bootstrap_config_path.to_string_lossy(),
             )?;
             if removed_rule_sets > 0 {
-                stop_singbox_process().ok();
+                core_process::stop_singbox_process().ok();
                 clear_runtime_log_file().ok();
                 launch_singbox_with_config(
                     &singbox_path,
-                    &bootstrap_config_path,
+                    &bootstrap_config_path.to_string_lossy(),
                     &log_path,
                     tun_enabled,
                 )?;
@@ -106,15 +116,15 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
             }
         } else if !started {
             let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(
-                &config_path,
-                &bootstrap_config_path,
+                &config_path.to_string_lossy(),
+                &bootstrap_config_path.to_string_lossy(),
             )?;
             if removed_rule_sets > 0 && details.to_ascii_lowercase().contains("rule-set") {
-                stop_singbox_process().ok();
+                core_process::stop_singbox_process().ok();
                 clear_runtime_log_file().ok();
                 launch_singbox_with_config(
                     &singbox_path,
-                    &bootstrap_config_path,
+                    &bootstrap_config_path.to_string_lossy(),
                     &log_path,
                     tun_enabled,
                 )?;
@@ -129,18 +139,31 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     if !started {
         let details = get_runtime_start_failure_details().unwrap_or_default();
         if details.is_empty() {
-            return Err(
-                "sing-box failed to start. The mixed inbound port did not open in time."
-                    .to_string(),
+            let message = "sing-box failed to start. The mixed inbound port did not open in time."
+                .to_string();
+            let _ = app_handle.emit(
+                "core-failed",
+                CoreEventPayload {
+                    status: "failed".to_string(),
+                    message: message.clone(),
+                },
             );
+            return Err(message);
         }
-        return Err(format!("sing-box failed to start. {}", details));
+        let message = format!("sing-box failed to start. {}", details);
+        let _ = app_handle.emit(
+            "core-failed",
+            CoreEventPayload {
+                status: "failed".to_string(),
+                message: message.clone(),
+            },
+        );
+        return Err(message);
     }
 
     let proxy_applied = set_system_proxy_internal(&proxy_host, proxy_port)?;
     let _ = apply_tray_icon(&app_handle, true);
-
-    Ok(if started_with_fallback {
+    let message = if started_with_fallback {
         "sing-box started with remote rule-set bootstrap skipped".to_string()
     } else if !proxy_applied {
         "sing-box started; existing system proxy was left unchanged".to_string()
@@ -148,7 +171,17 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
         "sing-box started successfully with TUN elevation".to_string()
     } else {
         "sing-box started successfully".to_string()
-    })
+    };
+
+    let _ = app_handle.emit(
+        "core-ready",
+        CoreEventPayload {
+            status: "ready".to_string(),
+            message: message.clone(),
+        },
+    );
+
+    Ok(message)
 }
 
 /// Stop sing-box core process and clear system proxy
@@ -156,6 +189,13 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 pub async fn stop_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
     cleanup_before_exit()?;
     let _ = apply_tray_icon(&app_handle, false);
+    let _ = app_handle.emit(
+        "core-stopped",
+        CoreEventPayload {
+            status: "stopped".to_string(),
+            message: "sing-box stopped".to_string(),
+        },
+    );
     Ok("sing-box stopped".to_string())
 }
 
@@ -163,6 +203,13 @@ pub async fn stop_singbox(app_handle: tauri::AppHandle) -> Result<String, String
 pub async fn quit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
     cleanup_before_exit()?;
     let _ = apply_tray_icon(&app_handle, false);
+    let _ = app_handle.emit(
+        "core-stopped",
+        CoreEventPayload {
+            status: "stopped".to_string(),
+            message: "sing-box stopped".to_string(),
+        },
+    );
     app_handle.exit(0);
     Ok(())
 }
@@ -193,10 +240,11 @@ pub async fn set_tray_connection_state(
 
 pub fn cleanup_before_exit() -> Result<(), String> {
     restore_system_proxy_internal()?;
-    stop_singbox_process()?;
+    core_process::stop_singbox_process()?;
     Ok(())
 }
 
+#[allow(dead_code)]
 fn stop_singbox_process() -> Result<(), String> {
     let output = hidden_command("taskkill")
         .args(["/F", "/IM", "sing-box.exe"])
@@ -244,13 +292,7 @@ fn stop_singbox_process() -> Result<(), String> {
 /// Check if sing-box is currently running
 #[tauri::command]
 pub async fn get_singbox_status() -> Result<bool, String> {
-    let output = hidden_command("tasklist")
-        .args(["/FI", "IMAGENAME eq sing-box.exe"])
-        .output()
-        .map_err(|e| format!("Failed to check status: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains("sing-box.exe"))
+    core_process::is_singbox_running()
 }
 
 #[tauri::command]
@@ -418,139 +460,18 @@ fn notify_internet_settings_change() {
         .ok();
 }
 
+#[allow(dead_code)]
 fn find_singbox_binary(app_handle: &tauri::AppHandle) -> Result<String, String> {
-    use tauri::Manager;
-
-    if let Ok(exe_path) = std::env::current_exe() {
-        for candidate in collect_binary_candidates_from_exe(&exe_path) {
-            if let Some(path) = normalize_existing_binary_path(candidate) {
-                return Ok(path);
-            }
-        }
-    }
-
-    if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        for candidate in collect_binary_candidates_from_resource_dir(&resource_dir) {
-            if let Some(path) = normalize_existing_binary_path(candidate) {
-                return Ok(path);
-            }
-        }
-    }
-
-    if let Ok(output) = hidden_command("where").arg("sing-box").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(path.lines().next().unwrap_or(&path).to_string());
-            }
-        }
-    }
-
-    let dev_path = std::path::PathBuf::from(r"C:\_dCode\SingBox\bin\sing-box.exe");
-    if dev_path.exists() {
-        return Ok(dev_path.to_string_lossy().to_string());
-    }
-
-    Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
+    core_process::find_singbox_binary_with_app(app_handle)
 }
 
+#[allow(dead_code)]
 pub fn find_singbox_binary_for_version() -> Result<String, String> {
-    if let Ok(exe_path) = std::env::current_exe() {
-        for candidate in collect_binary_candidates_from_exe(&exe_path) {
-            if let Some(path) = normalize_existing_binary_path(candidate) {
-                return Ok(path);
-            }
-        }
-    }
-
-    if let Ok(output) = hidden_command("where").arg("sing-box").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(path.lines().next().unwrap_or(&path).to_string());
-            }
-        }
-    }
-
-    if let Some(path) = normalize_existing_binary_path(std::path::PathBuf::from(
-        r"C:\_dCode\SingBox\bin\sing-box.exe",
-    )) {
-        return Ok(path);
-    }
-
-    Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
-}
-
-fn collect_binary_candidates_from_exe(exe_path: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(exe_dir) = exe_path.parent() {
-        candidates.push(exe_dir.join("sing-box.exe"));
-        candidates.push(exe_dir.join("bin").join("sing-box.exe"));
-        candidates.push(exe_dir.join("resources").join("sing-box.exe"));
-        candidates.push(exe_dir.join("resources").join("bin").join("sing-box.exe"));
-        candidates.push(
-            exe_dir
-                .join("..")
-                .join("..")
-                .join("..")
-                .join("bin")
-                .join("sing-box.exe"),
-        );
-        candidates.push(
-            exe_dir
-                .join("..")
-                .join("..")
-                .join("..")
-                .join("..")
-                .join("bin")
-                .join("sing-box.exe"),
-        );
-    }
-    candidates
-}
-
-fn collect_binary_candidates_from_resource_dir(
-    resource_dir: &std::path::Path,
-) -> Vec<std::path::PathBuf> {
-    vec![
-        resource_dir.join("sing-box.exe"),
-        resource_dir.join("bin").join("sing-box.exe"),
-    ]
-}
-
-fn normalize_existing_binary_path(candidate: std::path::PathBuf) -> Option<String> {
-    if !candidate.exists() {
-        return None;
-    }
-
-    let path = candidate
-        .canonicalize()
-        .unwrap_or(candidate)
-        .to_string_lossy()
-        .to_string();
-    Some(path.strip_prefix(r"\\?\").unwrap_or(&path).to_string())
+    core_process::find_singbox_binary()
 }
 
 fn hidden_command(program: &str) -> Command {
-    let mut command = Command::new(program);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-pub(crate) fn apply_deprecated_envs(command: &mut Command) -> &mut Command {
-    for (key, value) in DEPRECATED_ENV_VARS {
-        command.env(key, value);
-    }
-    command
-}
-
-fn deprecated_env_powershell_prefix() -> String {
-    DEPRECATED_ENV_VARS
-        .iter()
-        .map(|(key, value)| format!("$env:{key}={};", quote_powershell_literal(value)))
-        .collect::<Vec<_>>()
-        .join(" ")
+    core_process::hidden_command(program)
 }
 
 fn launch_singbox_with_config(
@@ -559,66 +480,16 @@ fn launch_singbox_with_config(
     log_path: &str,
     tun_enabled: bool,
 ) -> Result<(), String> {
-    if tun_enabled {
-        let singbox_path_quoted = quote_powershell_literal(singbox_path);
-        let config_path_quoted = quote_powershell_literal(config_path);
-        let log_path_quoted = quote_powershell_literal(log_path);
-        let env_prefix = deprecated_env_powershell_prefix();
-        let elevated_command = format!(
-            "{env_prefix} & {singbox} run -c {config} *>> {log}",
-            env_prefix = env_prefix,
-            singbox = singbox_path_quoted,
-            config = config_path_quoted,
-            log = log_path_quoted,
-        );
-        let ps_command = format!(
-            "Start-Process -FilePath 'powershell' -ArgumentList '-NoProfile','-WindowStyle','Hidden','-Command',{} -Verb RunAs -WindowStyle Hidden",
-            quote_powershell_literal(&elevated_command),
-        );
-
-        let result = hidden_command("powershell")
-            .args(["-Command", &ps_command])
-            .output()
-            .map_err(|e| format!("Failed to start sing-box: {}", e))?;
-
-        if !result.status.success() {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!(
-                "Failed to elevate sing-box (UAC denied?): {}",
-                stderr
-            ));
-        }
-    } else {
-        let log_file = open_runtime_log_file()?;
-        let log_file_err = log_file
-            .try_clone()
-            .map_err(|e| format!("Failed to clone runtime log file handle: {}", e))?;
-
-        let mut command = hidden_command(singbox_path);
-        apply_deprecated_envs(&mut command)
-            .args(["run", "-c", config_path])
-            .stdout(Stdio::from(log_file))
-            .stderr(Stdio::from(log_file_err))
-            .spawn()
-            .map_err(|e| format!("Failed to start sing-box without elevation: {}", e))?;
-    }
-
-    Ok(())
+    core_process::launch_singbox_with_config(singbox_path, config_path, log_path, tun_enabled)
 }
 
-fn quote_powershell_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
+#[allow(dead_code)]
 fn get_config_dir() -> String {
-    let home = dirs::home_dir().unwrap_or_default();
-    let config_dir = home.join(".singbox-client");
-    std::fs::create_dir_all(&config_dir).ok();
-    config_dir.to_string_lossy().to_string()
+    app_paths::app_data_dir().to_string_lossy().to_string()
 }
 
 fn get_runtime_log_file_path() -> String {
-    format!("{}\\singbox-runtime.log", get_config_dir())
+    app_paths::runtime_log_path().to_string_lossy().to_string()
 }
 
 fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String> {
@@ -1131,9 +1002,10 @@ fn get_runtime_start_failure_details() -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 fn open_runtime_log_file() -> Result<std::fs::File, String> {
     let path = get_runtime_log_file_path();
-    OpenOptions::new()
+    std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
@@ -1146,7 +1018,7 @@ fn clear_runtime_log_file() -> Result<(), String> {
 }
 
 fn get_proxy_state_file_path() -> String {
-    format!("{}\\proxy-state.json", get_config_dir())
+    app_paths::proxy_state_path().to_string_lossy().to_string()
 }
 
 fn save_proxy_state_snapshot() -> Result<(), String> {
@@ -1295,13 +1167,7 @@ fn write_or_delete_reg_value(name: &str, value: Option<&str>) -> Result<(), Stri
 }
 
 fn is_singbox_running() -> Result<bool, String> {
-    let output = hidden_command("tasklist")
-        .args(["/FI", "IMAGENAME eq sing-box.exe"])
-        .output()
-        .map_err(|e| format!("Failed to check sing-box status: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains("sing-box.exe"))
+    core_process::is_singbox_running()
 }
 
 fn wait_for_mixed_inbound(host: &str, port: u16, timeout: Duration) -> bool {
