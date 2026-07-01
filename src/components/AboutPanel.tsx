@@ -2,11 +2,21 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
-import { ExternalLink, Info, PackageCheck, Rocket, CheckCircle2, Gauge, Shield } from "lucide-react";
+import { ExternalLink, Gauge, Info } from "lucide-react";
+
+interface CoreRuntimeInfo {
+  binary_path: string;
+  config_path: string;
+  log_path: string;
+  pid: number | null;
+  running: boolean;
+  tun_enabled: boolean;
+}
 
 function AboutPanel() {
   const [version, setVersion] = useState("0.1.0");
   const [coreVersion, setCoreVersion] = useState("Unknown");
+  const [runtimeInfo, setRuntimeInfo] = useState<CoreRuntimeInfo | null>(null);
 
   useEffect(() => {
     getVersion()
@@ -24,55 +34,107 @@ function AboutPanel() {
       }
     };
 
-    loadCoreVersion();
+    void loadCoreVersion();
+  }, []);
+
+  useEffect(() => {
+    const loadRuntimeInfo = async () => {
+      try {
+        const result = await invoke<CoreRuntimeInfo>("get_core_runtime_info");
+        setRuntimeInfo(result);
+      } catch {
+        setRuntimeInfo(null);
+      }
+    };
+
+    void loadRuntimeInfo();
   }, []);
 
   return (
     <div className="page-entrance space-y-4">
-      <section className="panel-card rounded-[22px] p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-3">
+      <section className="panel-card rounded-[22px] p-3.5">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="max-w-2xl">
             <div className="flex items-center gap-2 text-content-secondary">
               <Info size={16} />
               <span className="section-label">About</span>
             </div>
-            <div>
-              <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">SingBox Client</h2>
-              <p className="mt-1.5 max-w-2xl text-[13px] leading-5 text-content-secondary">
-                Desktop controller for sing-box profiles, outbound groups, node testing, and proxy routing.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <AboutPill label="App" value={version} />
-              <AboutPill label="Core" value={coreVersion} />
-              <AboutPill label="Mode" value="Tray-first" />
-            </div>
+            <h2 className="mt-1.5 text-[1.12rem] font-semibold tracking-tight text-content">SingBox Client</h2>
           </div>
-          <div className="grid grid-cols-2 gap-2.5 sm:min-w-[16rem]">
-            <MiniStat icon={<CheckCircle2 size={16} />} label="Status" value="Ready" color="text-emerald-500 dark:text-emerald-400" />
-            <MiniStat icon={<Gauge size={16} />} label="Client" value="Desktop" color="text-sky-500 dark:text-sky-400" />
-            <MiniStat icon={<Shield size={16} />} label="Proxy" value="TUN / Mixed" color="text-purple-500 dark:text-purple-400" />
-            <MiniStat icon={<PackageCheck size={16} />} label="Docs" value="Included" color="text-orange-500 dark:text-orange-400" />
+          <div className="about-header-actions flex flex-wrap items-center gap-2">
+            <AboutPill label="App" value={version} />
+            <AboutPill label="Core" value={coreVersion} />
+            <AboutPill label="Runtime" value={runtimeInfo?.running ? "Running" : "Idle"} />
+            <AboutPill label="Mode" value={runtimeInfo?.tun_enabled ? "TUN" : "Mixed"} />
+            <button
+              type="button"
+              onClick={() => open("https://sing-box.sagernet.org/")}
+              className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
+            >
+              Docs
+              <ExternalLink size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => open("https://sing-box.sagernet.org/examples/")}
+              className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
+            >
+              Samples
+              <ExternalLink size={13} />
+            </button>
           </div>
         </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <ActionCard
-          icon={<Rocket size={18} />}
-          title="Samples"
-          description="Open sample configuration references."
-          actionLabel="Open Samples"
-          onAction={() => open("https://sing-box.sagernet.org/examples/")}
-        />
-        <ActionCard
-          icon={<Info size={18} />}
-          title="Exit Application"
-          description="Stop sing-box, restore proxy state, and quit."
-          actionLabel="Exit Now"
-          onAction={() => invoke("quit_application")}
-        />
-      </div>
+      <section className="panel-card rounded-[20px] p-3.5">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex items-center gap-2 text-content-secondary">
+              <Gauge size={16} />
+              <span className="section-label">Diagnostics</span>
+            </div>
+            <div className="about-diagnostics-actions flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => open("https://sing-box.sagernet.org/migration/")}
+                className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
+              >
+                Migration Notes
+                <ExternalLink size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => invoke("quit_application")}
+                className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
+              >
+                Exit Client
+                <ExternalLink size={13} />
+              </button>
+            </div>
+          </div>
+
+          {runtimeInfo ? (
+            <div className="overflow-hidden rounded-[18px] border border-border/70">
+              <DebugRow label="Core Path" value={runtimeInfo.binary_path || "Unavailable"} />
+              <DebugRow label="Runtime Config" value={runtimeInfo.config_path || "Unavailable"} />
+              <DebugRow label="Runtime Log" value={runtimeInfo.log_path || "Unavailable"} />
+              <DebugRow
+                label="Session"
+                value={`${runtimeInfo.running ? "Running" : "Stopped"}${runtimeInfo.pid ? ` | PID ${runtimeInfo.pid}` : ""}${runtimeInfo.tun_enabled ? " | TUN" : ""}`}
+                last
+              />
+            </div>
+          ) : (
+            <div className="rounded-[18px] border border-border/70 px-3 py-3 text-sm text-content-secondary">
+              Runtime diagnostics are unavailable until the desktop runtime responds.
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-border/70 bg-white/35 px-3 py-2 text-[11px] leading-5 text-content-secondary dark:bg-slate-950/20">
+            Quit restores the system proxy state and stops the bundled sing-box core.
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -86,52 +148,19 @@ function AboutPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MiniStat({
-  icon,
+function DebugRow({
   label,
   value,
-  color,
+  last = false,
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
-  color: string;
+  last?: boolean;
 }) {
   return (
-    <div className="panel-card rounded-[18px] p-3">
-      <div className={`mb-2.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-surface-elevated ${color}`}>{icon}</div>
-      <p className="text-lg font-semibold tracking-tight text-content">{value}</p>
-      <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-content-secondary">{label}</p>
-    </div>
-  );
-}
-
-function ActionCard({
-  icon,
-  title,
-  description,
-  actionLabel,
-  onAction,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  actionLabel: string;
-  onAction: () => void | Promise<void>;
-}) {
-  return (
-    <div className="panel-card rounded-[20px] p-4">
-      <div className="flex items-center gap-2 text-content-secondary">{icon}</div>
-      <h3 className="mt-3 text-sm font-semibold text-content">{title}</h3>
-      <p className="mt-1.5 text-[13px] leading-5 text-content-secondary">{description}</p>
-      <button
-        type="button"
-        onClick={onAction}
-        className="btn-secondary mt-3 inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
-      >
-        <span>{actionLabel}</span>
-        <ExternalLink size={14} />
-      </button>
+    <div className={`px-3 py-2.5 ${last ? "" : "border-b border-border/60"}`}>
+      <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
+      <p className="mt-1 break-all text-[12px] leading-5 text-content">{value}</p>
     </div>
   );
 }

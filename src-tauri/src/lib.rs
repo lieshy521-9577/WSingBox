@@ -1,4 +1,6 @@
+mod app_paths;
 mod commands;
+mod core_process;
 
 use commands::{config, latency, proxy, singbox as singbox_cmd};
 use tauri::{
@@ -136,10 +138,13 @@ pub fn run() {
             config::import_subscription,
             config::import_config_file,
             config::import_config_url,
+            config::validate_import_file,
+            config::validate_import_url,
             config::get_config_overview,
             config::get_profiles,
             config::get_active_outbound,
             config::get_runtime_debug_snapshot,
+            config::get_core_runtime_info,
             config::get_config_profiles,
             config::get_active_config_profile,
             config::get_config_profile_json,
@@ -152,12 +157,15 @@ pub fn run() {
             config::save_rule_sets_json,
             config::get_route_rules_json,
             config::save_route_rules_json,
+            config::sync_active_profile_to_runtime,
             config::set_active_outbound,
             config::remove_group,
             config::switch_config_profile,
+            config::refresh_config_profile,
             config::delete_config_profile,
             config::rename_config_profile,
             config::save_config_profile_json,
+            config::get_startup_health_report,
             // latency testing
             latency::test_node_latency,
             latency::test_all_latency,

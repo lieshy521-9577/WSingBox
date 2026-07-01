@@ -1,9 +1,4 @@
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::process::Command;
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Set system proxy (HTTP proxy mode)
 #[tauri::command]
@@ -126,8 +121,5 @@ fn notify_internet_settings_change() {
 }
 
 fn hidden_command(program: &str) -> Command {
-    let mut command = Command::new(program);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
+    crate::core_process::hidden_command(program)
 }

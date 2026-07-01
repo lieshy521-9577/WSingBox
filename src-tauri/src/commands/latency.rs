@@ -1,15 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LatencyResult {
@@ -35,7 +30,7 @@ pub async fn test_node_latency(
     let mixed_port = reserve_local_port()?;
     let config_path =
         write_temp_latency_config(&node_id, &node_type, &server, port, &settings, mixed_port)?;
-    let singbox_path = find_singbox_binary()?;
+    let singbox_path = crate::core_process::find_singbox_binary()?;
 
     let mut child = start_temp_singbox(&singbox_path, &config_path)?;
     let proxy_ready = wait_for_port(mixed_port, Duration::from_secs(5));
@@ -166,8 +161,8 @@ fn write_temp_latency_config(
 }
 
 fn start_temp_singbox(singbox_path: &str, config_path: &PathBuf) -> Result<Child, String> {
-    let mut command = hidden_command(singbox_path);
-    super::singbox::apply_deprecated_envs(&mut command)
+    let mut command = crate::core_process::hidden_command(singbox_path);
+    crate::core_process::apply_deprecated_envs(&mut command)
         .args(["run", "-c", &config_path.to_string_lossy()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -205,7 +200,7 @@ async fn measure_proxy_request(node_id: &str, mixed_port: u16) -> Result<Latency
         proxy = proxy_url
     );
 
-    let output = hidden_command("powershell")
+    let output = crate::core_process::hidden_command("powershell")
         .args(["-NoProfile", "-Command", &ps_script])
         .output()
         .map_err(|e| format!("Failed to run latency request via proxy: {}", e))?;
@@ -238,65 +233,4 @@ async fn measure_proxy_request(node_id: &str, mixed_port: u16) -> Result<Latency
 fn stop_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
-}
-
-fn find_singbox_binary() -> Result<String, String> {
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidates = vec![
-                exe_dir.join("sing-box.exe"),
-                exe_dir.join("bin").join("sing-box.exe"),
-                exe_dir.join("resources").join("sing-box.exe"),
-                exe_dir.join("resources").join("bin").join("sing-box.exe"),
-                exe_dir
-                    .join("..")
-                    .join("..")
-                    .join("..")
-                    .join("bin")
-                    .join("sing-box.exe"),
-                exe_dir
-                    .join("..")
-                    .join("..")
-                    .join("..")
-                    .join("..")
-                    .join("bin")
-                    .join("sing-box.exe"),
-            ];
-
-            for candidate in candidates {
-                if candidate.exists() {
-                    let path = candidate
-                        .canonicalize()
-                        .unwrap_or(candidate)
-                        .to_string_lossy()
-                        .to_string();
-                    let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_string();
-                    return Ok(path);
-                }
-            }
-        }
-    }
-
-    if let Ok(output) = hidden_command("where").arg("sing-box").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(path.lines().next().unwrap_or(&path).to_string());
-            }
-        }
-    }
-
-    let dev_path = PathBuf::from(r"C:\_dCode\SingBox\bin\sing-box.exe");
-    if dev_path.exists() {
-        return Ok(dev_path.to_string_lossy().to_string());
-    }
-
-    Err("sing-box.exe not found. Please place it in the bin/ folder or add it to PATH.".to_string())
-}
-
-fn hidden_command(program: &str) -> Command {
-    let mut command = Command::new(program);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
 }
