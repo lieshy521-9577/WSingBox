@@ -14,7 +14,7 @@ import {
   Globe,
 } from "lucide-react";
 import { ProxyNode, PROTOCOL_LABELS, ProtocolType } from "../types";
-import { Profile } from "../hooks/useSingbox";
+import { Profile, RuntimeDebugSnapshot, RuntimePhase } from "../hooks/useSingbox";
 
 interface LatencyResult {
   node_id: string;
@@ -26,6 +26,9 @@ interface NodeListProps {
   nodes: ProxyNode[];
   profiles: Profile[];
   selectedOutboundTag: string | null;
+  runtimeDebug: RuntimeDebugSnapshot | null;
+  runtimePhase: RuntimePhase;
+  isRunning: boolean;
   hasConfig: boolean;
   onSelect: (tag: string) => void;
   onRemove: (id: string) => void;
@@ -38,6 +41,9 @@ function NodeList({
   nodes,
   profiles,
   selectedOutboundTag,
+  runtimeDebug,
+  runtimePhase,
+  isRunning,
   hasConfig,
   onSelect,
   onRemove,
@@ -60,8 +66,8 @@ function NodeList({
     () => profiles.filter((profile) => !(profile.tag === "proxy" && profile.profile_type === "selector")),
     [profiles]
   );
-  const activeGroup = profiles.find((profile) => profile.tag === selectedOutboundTag) ?? null;
-  const activeNode = nodes.find((node) => node.id === selectedOutboundTag) ?? null;
+  const selectedGroup = profiles.find((profile) => profile.tag === selectedOutboundTag) ?? null;
+  const selectedNode = nodes.find((node) => node.id === selectedOutboundTag) ?? null;
   const resolveLatencyMode = (nodeType: string) => {
     if (latencyMode !== "auto") {
       return latencyMode;
@@ -219,17 +225,38 @@ function NodeList({
     return null;
   }, [latencies, nodeMap, profiles, resolveMemberNodeTags]);
 
-  const activeResolvedNodeId = useMemo(() => {
-    if (activeNode) {
-      return activeNode.id;
+  const selectedResolvedNodeId = useMemo(() => {
+    if (selectedNode) {
+      return selectedNode.id;
     }
 
-    if (activeGroup) {
-      return resolveActiveNodeFromProfile(activeGroup.tag);
+    if (selectedGroup) {
+      return resolveActiveNodeFromProfile(selectedGroup.tag);
     }
 
     return null;
-  }, [activeGroup, activeNode, resolveActiveNodeFromProfile]);
+  }, [resolveActiveNodeFromProfile, selectedGroup, selectedNode]);
+
+  const runtimeGroupTag = runtimeDebug?.top_selector_default || null;
+  const runtimeLeafNodeId = runtimeDebug?.active_leaf_outbound || null;
+  const isRuntimeTransitioning = runtimePhase === "starting" || runtimePhase === "switching" || runtimePhase === "stopping";
+
+  const runtimeResolvedNodeId = useMemo(() => {
+    if (!runtimeLeafNodeId) {
+      return null;
+    }
+
+    if (nodeMap[runtimeLeafNodeId]) {
+      return runtimeLeafNodeId;
+    }
+
+    const runtimeProfile = profiles.find((profile) => profile.tag === runtimeLeafNodeId);
+    if (runtimeProfile) {
+      return resolveActiveNodeFromProfile(runtimeProfile.tag);
+    }
+
+    return null;
+  }, [nodeMap, profiles, resolveActiveNodeFromProfile, runtimeLeafNodeId]);
 
   useEffect(() => {
     if (testing || nodes.length === 0 || Object.keys(latencies).length > 0) {
@@ -256,14 +283,24 @@ function NodeList({
                   Nodes
                   <strong className="text-content">{nodes.length}</strong>
                 </span>
-                {activeGroup && (
+                {selectedGroup && (
                   <span className="status-chip status-chip-primary">
-                    Group: {activeGroup.tag}
+                    Selected: {selectedGroup.tag}
                   </span>
                 )}
-                {activeResolvedNodeId && nodeMap[activeResolvedNodeId] && (
+                {selectedNode && (
+                  <span className="status-chip status-chip-primary">
+                    Selected Node: {selectedNode.name}
+                  </span>
+                )}
+                {isRunning && runtimeGroupTag && (
                   <span className="status-chip border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300">
-                    Routed Node: {nodeMap[activeResolvedNodeId].name}
+                    Live Group: {runtimeGroupTag}
+                  </span>
+                )}
+                {isRunning && runtimeResolvedNodeId && nodeMap[runtimeResolvedNodeId] && (
+                  <span className="status-chip border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300">
+                    Routed Node: {nodeMap[runtimeResolvedNodeId].name}
                   </span>
                 )}
               </div>
@@ -310,10 +347,23 @@ function NodeList({
           <div className="overflow-hidden rounded-[20px] border border-border/70 bg-surface-base/30">
             {visibleProfiles.map((profile) => (
               <div key={profile.tag} className="group border-b border-border/60 last:border-b-0">
+                {(() => {
+                  const isLiveGroup =
+                    isRunning &&
+                    !isRuntimeTransitioning &&
+                    runtimeGroupTag === profile.tag;
+                  const isSelectedGroup = selectedOutboundTag === profile.tag;
+                  const showSelectedGroup = isSelectedGroup && !isLiveGroup;
+
+                  return (
                 <div
                   onClick={() => onSelect(profile.tag)}
                   className={`flex cursor-pointer items-center gap-2 px-3.5 py-2.5 transition-all ${
-                    selectedOutboundTag === profile.tag ? "bg-primary-600/10" : "hover:bg-surface-elevated/60"
+                    isLiveGroup
+                      ? "bg-emerald-500/8"
+                      : showSelectedGroup
+                        ? "bg-primary-600/10"
+                        : "hover:bg-surface-elevated/60"
                   }`}
                 >
                   <button
@@ -332,7 +382,8 @@ function NodeList({
                     {profile.profile_type}
                   </span>
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-                    {selectedOutboundTag === profile.tag && <span className="status-chip status-chip-primary">Active</span>}
+                    {isLiveGroup && <span className="status-chip border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300">Live</span>}
+                    {showSelectedGroup && <span className="status-chip status-chip-primary">Selected</span>}
                     <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">
                       {profile.outbounds.length} members
                     </span>
@@ -362,6 +413,8 @@ function NodeList({
                     )}
                   </div>
                 </div>
+                  );
+                })()}
 
                 {expandedGroups[profile.tag] && (
                   <div className="border-t border-border/60 bg-surface-base/40 px-3 py-3">
@@ -369,7 +422,15 @@ function NodeList({
                       {profile.outbounds.map((memberTag) => {
                         const memberNode = nodeMap[memberTag];
                         const memberProfile = profiles.find((item) => item.tag === memberTag);
+                        const isLiveNode =
+                          Boolean(
+                            isRunning &&
+                              !isRuntimeTransitioning &&
+                              memberNode &&
+                              runtimeResolvedNodeId === memberNode.id
+                          );
                         const isSelected = selectedOutboundTag === memberTag;
+                        const showSelected = isSelected && !isLiveNode;
 
                         return (
                           <button
@@ -377,12 +438,16 @@ function NodeList({
                             type="button"
                             onClick={() => onSelect(memberTag)}
                             className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-left transition-all ${
-                              isSelected
-                                ? "border-primary-500/30 bg-primary-600/10"
+                              isLiveNode
+                                ? "border-emerald-500/30 bg-emerald-500/8"
+                                : showSelected
+                                  ? "border-primary-500/30 bg-primary-600/10"
                                 : "border-border/60 bg-card/40 hover:border-border hover:bg-card"
                             }`}
                           >
-                            {isSelected ? (
+                            {isLiveNode ? (
+                              <CheckCircle2 size={15} className="shrink-0 text-emerald-500" />
+                            ) : isSelected ? (
                               <CheckCircle2 size={15} className="shrink-0 text-primary-500" />
                             ) : memberProfile ? (
                               <Layers3 size={13} className="shrink-0 text-yellow-500 dark:text-yellow-400" />
@@ -399,6 +464,12 @@ function NodeList({
                               <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
                                 {PROTOCOL_LABELS[memberNode.node_type as ProtocolType] || memberNode.node_type}
                               </span>
+                            )}
+                            {isLiveNode && (
+                              <span className="text-[10px] text-emerald-500">Live</span>
+                            )}
+                            {showSelected && (
+                              <span className="text-[10px] text-primary-500">Selected</span>
                             )}
                             {memberNode && renderLatency(memberNode.id)}
                           </button>
@@ -430,7 +501,10 @@ function NodeList({
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6 2xl:grid-cols-7">
             {nodes.map((node) => {
               const isSelected = node.id === selectedOutboundTag;
-              const isResolvedActive = !isSelected && activeResolvedNodeId === node.id;
+              const isRuntimeNode =
+                Boolean(isRunning && !isRuntimeTransitioning && runtimeResolvedNodeId === node.id);
+              const isResolvedSelected = !isSelected && selectedResolvedNodeId === node.id;
+              const showSelected = isSelected && !isRuntimeNode;
               const protocolLabel =
                 PROTOCOL_LABELS[node.node_type as ProtocolType] || node.node_type;
 
@@ -439,18 +513,20 @@ function NodeList({
                   key={node.id}
                   onClick={() => onSelect(node.id)}
                   className={`group flex cursor-pointer items-center gap-3 rounded-[18px] border px-3 py-2.5 transition-all ${
-                    isSelected
-                      ? "border-primary-500/30 bg-primary-600/10"
-                      : isResolvedActive
-                        ? "border-emerald-500/30 bg-emerald-500/8"
+                    isRuntimeNode
+                      ? "border-emerald-500/30 bg-emerald-500/8"
+                      : showSelected
+                        ? "border-primary-500/30 bg-primary-600/10"
+                        : isResolvedSelected
+                          ? "border-primary-500/20 bg-primary-600/6"
                         : "subtle-row"
                   }`}
                   title={`${node.server}${node.port > 0 ? `:${node.port}` : ""}`}
                 >
-                  {isSelected ? (
-                    <CheckCircle2 size={18} className="shrink-0 text-primary-500" />
-                  ) : isResolvedActive ? (
+                  {isRuntimeNode ? (
                     <CheckCircle2 size={18} className="shrink-0 text-emerald-500" />
+                  ) : isSelected ? (
+                    <CheckCircle2 size={18} className="shrink-0 text-primary-500" />
                   ) : (
                     <div className="h-[18px] w-[18px] shrink-0 rounded-full border-2 border-surface-muted" />
                   )}
@@ -463,8 +539,9 @@ function NodeList({
                       <span className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">
                         {protocolLabel}
                       </span>
-                      {isSelected && <span className="text-[10px] text-primary-500">Active</span>}
-                      {isResolvedActive && <span className="text-[10px] text-emerald-500">Routed</span>}
+                      {isRuntimeNode && <span className="text-[10px] text-emerald-500">Live</span>}
+                      {showSelected && <span className="text-[10px] text-primary-500">Selected</span>}
+                      {!isRuntimeNode && isResolvedSelected && <span className="text-[10px] text-primary-500">Pending Route</span>}
                       {renderLatency(node.id)}
                     </div>
                   </div>

@@ -2,6 +2,16 @@
 
 A lightweight Windows GUI client for [sing-box](https://sing-box.sagernet.org/), built with Tauri 2, React, and TypeScript.
 
+## Interface Snapshot
+
+![SingBox Client main workspace](docs/images/homepage-actions.png)
+
+The main workspace is optimized for a small desktop window:
+
+- top bar for runtime status, current route, and quick start/stop
+- `Nodes` page for outbound group selection, node latency testing, and node editing
+- left sidebar for profile import and switching between saved local/URL profiles
+
 ## Features
 
 - Import sing-box JSON profiles with compatibility cleanup for sing-box `1.12.x`

@@ -115,10 +115,19 @@ export function useSingbox() {
       setProxyEnabled(proxy);
       setRuntimePhase((current) => {
         if (running) {
+          if (
+            loading &&
+            (current === "starting" || current === "switching" || current === "stopping")
+          ) {
+            return current;
+          }
           return "running";
         }
 
-        if (current === "starting" || current === "switching" || current === "stopping") {
+        if (
+          loading &&
+          (current === "starting" || current === "switching" || current === "stopping")
+        ) {
           return current;
         }
 
@@ -128,7 +137,7 @@ export function useSingbox() {
     } catch (err) {
       console.error("Status check failed:", err);
     }
-  }, [syncTrayConnectionState]);
+  }, [loading, syncTrayConnectionState]);
 
   const loadActiveOutbound = useCallback(async () => {
     try {
@@ -361,7 +370,10 @@ export function useSingbox() {
         setSwitchStatus(`Applying ${tag}...`);
         await invoke("sync_active_profile_to_runtime");
         const actual = await invoke<string>("set_active_outbound", { targetTag: tag });
+        setSelectedOutboundTag(actual || null);
         if (isRunning) {
+          setIsRunning(false);
+          setProxyEnabled(false);
           setSwitchStatus("Stopping previous node...");
           await invoke("stop_singbox");
           setSwitchStatus("Starting selected node...");
@@ -371,9 +383,10 @@ export function useSingbox() {
         await loadProfiles();
         await loadRuntimeDebug();
         await loadActiveOutbound();
-        await checkStatus();
-        setSelectedOutboundTag(actual || null);
-        showTransientSwitchStatus(`Switched to ${actual || tag}`);
+        if (!awaitingRuntimeReady) {
+          await checkStatus();
+          showTransientSwitchStatus(`Switched to ${actual || tag}`);
+        }
       } else {
         setSelectedOutboundTag(tag);
         showTransientSwitchStatus(`Selected ${tag}`);

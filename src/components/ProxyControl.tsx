@@ -88,9 +88,13 @@ function ProxyControl({
     ? runtimeSelectedIsProfile
       ? null
       : runtimeLeafNode ?? resolvedGroupNode
-    : resolvedGroupNode;
-  const displayedProfile = isLive || isTransitioning ? runtimeLeafProfile ?? selectedProfile : selectedProfile;
+    : null;
+  const displayedProfile = isLive || isTransitioning ? runtimeLeafProfile ?? selectedProfile : null;
   const pendingLabel = selectedNode?.name ?? selectedProfile?.tag ?? null;
+  const pendingRouteSummary =
+    selectedProfile && resolvedGroupNode && selectedProfile.tag !== resolvedGroupNode.name
+      ? `${selectedProfile.tag} -> ${resolvedGroupNode.name}`
+      : pendingLabel ?? "Not selected";
   const activeLabel = displayedLeafNode?.name ?? displayedProfile?.tag ?? "Not selected";
   const routeSummary =
     displayedProfile && displayedLeafNode && displayedProfile.tag !== displayedLeafNode.name
@@ -113,10 +117,10 @@ function ProxyControl({
           ? "Stopping sing-box and restoring local network settings"
           : isLive
             ? "Local proxy is ready for traffic"
-            : routeSummary !== "Not selected"
-              ? `Ready route: ${routeSummary}`
+            : pendingRouteSummary !== "Not selected"
+              ? `Selected target: ${pendingRouteSummary}`
               : hasConfig
-                ? "Ready with imported profile"
+                ? "Choose a node or group before starting"
                 : "Import profile or choose node";
   const title =
     runtimePhase === "switching"
@@ -153,9 +157,9 @@ function ProxyControl({
             ? "Failed"
             : isLive
               ? "Traffic Live"
-              : "Standby";
+              : "Stopped";
   const runtimeFacts = [
-    { label: "Route", value: routeSummary },
+    { label: isLive || isTransitioning ? "Route" : "Selected", value: isLive || isTransitioning ? routeSummary : pendingRouteSummary },
     { label: "Switch", value: switchStatus ?? (loading ? "Updating" : isLive ? "Ready" : "Idle") },
     pendingDiffersFromActive && pendingLabel
       ? { label: "Pending", value: pendingLabel, accent: "info" as const }

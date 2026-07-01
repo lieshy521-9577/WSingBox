@@ -328,6 +328,9 @@ function App() {
                 nodes={singbox.nodes}
                 profiles={singbox.profiles}
                 selectedOutboundTag={singbox.selectedOutboundTag}
+                runtimeDebug={singbox.runtimeDebug}
+                runtimePhase={singbox.runtimePhase}
+                isRunning={singbox.isRunning}
                 hasConfig={singbox.hasConfig}
                 onSelect={singbox.setSelectedOutboundTag}
                 onRemove={singbox.removeNode}

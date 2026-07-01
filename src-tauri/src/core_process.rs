@@ -101,13 +101,13 @@ pub fn is_singbox_running() -> Result<bool, String> {
         }
     }
 
-    let output = hidden_command("tasklist")
-        .args(["/FI", "IMAGENAME eq sing-box.exe"])
-        .output()
-        .map_err(|e| format!("Failed to check sing-box status: {}", e))?;
+    if let Some(pid) = load_saved_core_pid().ok().flatten() {
+        if is_pid_running(pid) {
+            return Ok(true);
+        }
+    }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains("sing-box.exe"))
+    Ok(false)
 }
 
 pub fn stop_singbox_process() -> Result<(), String> {
@@ -306,6 +306,17 @@ fn clear_core_pid() -> Result<(), String> {
         std::fs::remove_file(path).map_err(|e| format!("Failed to remove core pid: {}", e))?;
     }
     Ok(())
+}
+
+fn load_saved_core_pid() -> Result<Option<u32>, String> {
+    let path = app_paths::core_pid_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read core pid: {}", e))?;
+    Ok(content.trim().parse::<u32>().ok())
 }
 
 fn is_pid_running(pid: u32) -> bool {
