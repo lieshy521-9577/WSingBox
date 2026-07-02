@@ -7,6 +7,7 @@ import {
   Route,
   Shield,
   Users,
+  Loader2,
 } from "lucide-react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
 
@@ -18,6 +19,7 @@ interface ConfigOverviewPanelProps {
   selectedOutboundTag: string | null;
   isRunning?: boolean;
   onToggleProxy?: () => void;
+  loading?: boolean;
 }
 
 function ConfigOverviewPanel({
@@ -26,6 +28,7 @@ function ConfigOverviewPanel({
   selectedOutboundTag,
   isRunning = false,
   onToggleProxy,
+  loading = false,
 }: ConfigOverviewPanelProps) {
   const [activeSection, setActiveSection] = useState<OverviewSection>("nodes");
 
@@ -79,11 +82,14 @@ function ConfigOverviewPanel({
           <input
             type="checkbox"
             checked={isRunning}
-            onChange={() => onToggleProxy?.()}
+            onChange={() => !loading && onToggleProxy?.()}
+            disabled={loading}
             className="peer sr-only"
           />
           <span className="h-7 w-[52px] rounded-full border border-border/80 bg-muted transition-colors peer-checked:border-emerald-500/40 peer-checked:bg-emerald-500/20" />
-          <span className="pointer-events-none absolute left-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-[26px] peer-checked:bg-emerald-500 dark:bg-slate-200" />
+          <span className="pointer-events-none absolute left-[3px] flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-[26px] peer-checked:bg-emerald-500 dark:bg-slate-200">
+            {loading && <Loader2 size={11} className="animate-spin text-content-muted" />}
+          </span>
         </label>
 
         <div className="flex items-center justify-center gap-10">
@@ -162,7 +168,7 @@ function ConfigOverviewPanel({
       </div>
 
       {/* ── Overview Grid ── */}
-      <div className="grid grid-cols-1 gap-[18px] xl:grid-cols-2">
+      <div className={`grid gap-[18px] ${activeSection === "nodes" ? "grid-cols-1 xl:grid-cols-2" : "grid-cols-1"}`}>
         {/* Left column: section-specific list */}
         <div className="min-w-0">
           {activeSection === "nodes" && (
@@ -221,8 +227,8 @@ function ConfigOverviewPanel({
           )}
         </div>
 
-        {/* Right column: proxy nodes (only in nodes view) or secondary info */}
-        {activeSection === "nodes" ? (
+        {/* Right column: proxy nodes (only in nodes view) */}
+        {activeSection === "nodes" && (
           <div className="min-w-0">
             <OverviewCard
               title="Proxy Nodes"
@@ -236,16 +242,6 @@ function ConfigOverviewPanel({
                 selected: selectedOutboundTag === node.tag,
               }))}
             />
-          </div>
-        ) : (
-          <div className="hidden min-w-0 xl:flex xl:items-center xl:justify-center">
-            <div className="rounded-[18px] border border-border/60 bg-surface/40 px-6 py-8 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-500/10 text-primary-500">
-                <Network size={22} />
-              </div>
-              <p className="text-sm font-medium text-content">Switch to Nodes</p>
-              <p className="mt-1 text-xs text-content-secondary">to see paired proxy nodes and groups</p>
-            </div>
           </div>
         )}
       </div>

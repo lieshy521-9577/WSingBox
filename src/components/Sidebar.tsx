@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Network, ScrollText, LayoutDashboard, FileUp, Settings, Info, ChevronUp, Pencil, Download, FolderOpen } from "lucide-react";
+import { Network, ScrollText, LayoutDashboard, FileUp, Settings, Info, ChevronUp, Pencil, Download, FolderOpen, Loader2 } from "lucide-react";
 import { ConfigProfile } from "../types";
 import { RuntimePhase } from "../hooks/useSingbox";
 
@@ -11,6 +11,7 @@ interface SidebarProps {
   isRunning: boolean;
   runtimePhase: RuntimePhase;
   onToggleProxy: () => void;
+  loading: boolean;
   onImportProfile: () => void;
   configProfiles: ConfigProfile[];
   activeConfigProfileId: string | null;
@@ -27,6 +28,7 @@ function Sidebar({
   isRunning,
   runtimePhase,
   onToggleProxy,
+  loading,
   onImportProfile,
   configProfiles,
   activeConfigProfileId,
@@ -59,7 +61,7 @@ function Sidebar({
     { id: "about" as Page, label: "About", icon: Info },
   ];
 
-  const sessionState = getSessionState(runtimePhase, isRunning);
+  const sessionState = getSessionState(runtimePhase, isRunning, loading);
   const activeProfile = configProfiles.find((p) => p.id === activeConfigProfileId);
 
   return (
@@ -68,16 +70,28 @@ function Sidebar({
       <div className="shrink-0 px-1.5 pt-1">
         <p className="section-label pb-1.5">Session</p>
         <div
-          onClick={onToggleProxy}
-          className="cursor-pointer select-none rounded-2xl border border-muted bg-muted/50 p-3 transition-all hover:border-primary-500/30 hover:bg-muted/70 active:scale-[0.985]"
+          onClick={loading ? undefined : onToggleProxy}
+          className={`select-none rounded-2xl border border-muted bg-muted/50 p-3 transition-all ${
+            loading
+              ? "cursor-not-allowed opacity-80"
+              : "cursor-pointer hover:border-primary-500/30 hover:bg-muted/70 active:scale-[0.985]"
+          }`}
         >
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <div className={`status-dot ${sessionState.dotClass}`} />
+              {loading ? (
+                <Loader2 size={14} className="animate-spin text-primary-500" />
+              ) : (
+                <div className={`status-dot ${sessionState.dotClass}`} />
+              )}
               <span className="text-[13px] font-semibold text-primary">{sessionState.label}</span>
             </div>
             <span className={`status-pill ${sessionState.pillClass}`}>
-              <span className={`status-dot ${sessionState.dotClass}`} style={{ width: 6, height: 6 }} />
+              {loading ? (
+                <Loader2 size={10} className="animate-spin" />
+              ) : (
+                <span style={{ width: 6, height: 6 }} className={`status-dot ${sessionState.dotClass}`} />
+              )}
               {sessionState.pillLabel}
             </span>
           </div>
@@ -202,7 +216,17 @@ function Sidebar({
   );
 }
 
-function getSessionState(runtimePhase: RuntimePhase, isRunning: boolean) {
+function getSessionState(runtimePhase: RuntimePhase, isRunning: boolean, loading: boolean) {
+  if (loading) {
+    return {
+      label: isRunning ? "Stopping" : "Starting",
+      helper: isRunning ? "Closing sing-box core" : "Initializing sing-box core",
+      pillLabel: "Processing",
+      pillClass: "info",
+      dotClass: "live",
+      engineLabel: isRunning ? "Stopping" : "Booting",
+    };
+  }
   if (runtimePhase === "running" && isRunning) {
     return {
       label: "Connected",

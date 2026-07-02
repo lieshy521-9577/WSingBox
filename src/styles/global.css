@@ -161,6 +161,13 @@ body::before {
 .status-pill.error { background: rgb(var(--error) / 0.12); color: rgb(var(--error)); }
 .status-pill.info { background: rgb(var(--info) / 0.12); color: rgb(var(--info)); }
 
+.status-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: rgb(var(--bg-muted)); color: rgb(var(--text-secondary));
+}
+.status-chip-primary { background: rgb(var(--primary-500) / 0.12); color: rgb(var(--primary-500)); }
+
 .metric-chip {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 8px; border-radius: 999px; font-size: 10px;

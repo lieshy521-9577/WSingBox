@@ -13,6 +13,7 @@ import {
   Zap,
   Globe,
   X,
+  Loader2,
 } from "lucide-react";
 import { ProxyNode, PROTOCOL_LABELS, ProtocolType } from "../types";
 import { Profile, RuntimeDebugSnapshot, RuntimePhase } from "../hooks/useSingbox";
@@ -223,6 +224,7 @@ function NodeList({
               {visibleProfiles.map((profile) => {
                 const isLiveGroup = isRunning && !isRuntimeTransitioning && runtimeGroupTag === profile.tag;
                 const isSelectedGroup = selectedOutboundTag === profile.tag;
+                const isSwitchingGroup = runtimePhase === "switching" && selectedOutboundTag === profile.tag;
                 const showSelectedGroup = isSelectedGroup && !isLiveGroup;
 
                 return (
@@ -230,7 +232,9 @@ function NodeList({
                     <div
                       onClick={() => onSelect(profile.tag)}
                       className={`flex cursor-pointer items-center gap-2 px-3.5 py-2.5 transition-all ${
-                        isLiveGroup ? "bg-emerald-500/8" : showSelectedGroup ? "bg-primary-600/10" : "hover:bg-muted/30"
+                        isLiveGroup ? "bg-emerald-500/8" :
+                        isSwitchingGroup ? "bg-primary-600/5" :
+                        showSelectedGroup ? "bg-primary-600/10" : "hover:bg-muted/30"
                       }`}
                     >
                       <button type="button" onClick={(e) => { e.stopPropagation(); toggleGroup(profile.tag); }}
@@ -243,6 +247,7 @@ function NodeList({
                         {profile.profile_type}
                       </span>
                       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+                        {isSwitchingGroup && <span className="status-chip status-chip-primary"><Loader2 size={10} className="animate-spin" /> Switching</span>}
                         {isLiveGroup && <span className="status-chip border-emerald-500/25 bg-emerald-500/12 text-emerald-500">Live</span>}
                         {showSelectedGroup && <span className="status-chip status-chip-primary">Selected</span>}
                         <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">{profile.outbounds.length} members</span>
@@ -264,6 +269,7 @@ function NodeList({
                             const memberProfile = profiles.find((item) => item.tag === memberTag);
                             const isLiveNode = Boolean(isRunning && !isRuntimeTransitioning && memberNode && runtimeResolvedNodeId === memberNode.id);
                             const isSelected = selectedOutboundTag === memberTag;
+                            const isSwitchingTarget = runtimePhase === "switching" && selectedOutboundTag === memberTag;
                             const showSelected = isSelected && !isLiveNode;
 
                             return (
@@ -274,15 +280,17 @@ function NodeList({
                                   showSelected ? "border-primary-500/30 bg-primary-600/10" :
                                   "border-border/60 bg-card/40 hover:border-border hover:bg-card"
                                 }`}>
-                                {isLiveNode ? <CheckCircle2 size={15} className="shrink-0 text-emerald-500" /> :
+                                {isSwitchingTarget ? <Loader2 size={15} className="shrink-0 animate-spin text-primary-500" /> :
+                                 isLiveNode ? <CheckCircle2 size={15} className="shrink-0 text-emerald-500" /> :
                                  isSelected ? <CheckCircle2 size={15} className="shrink-0 text-primary-500" /> :
                                  memberProfile ? <Layers3 size={13} className="shrink-0 text-yellow-500" /> :
                                  <Server size={13} className="shrink-0 text-content-muted" />}
                                 <span className="max-w-[12rem] truncate text-xs font-medium text-content">{memberTag}</span>
                                 {memberProfile && <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] text-yellow-600 dark:text-yellow-400">{memberProfile.profile_type}</span>}
                                 {memberNode && <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">{PROTOCOL_LABELS[memberNode.node_type as ProtocolType] || memberNode.node_type}</span>}
-                                {isLiveNode && <span className="text-[10px] text-emerald-500">Live</span>}
-                                {showSelected && <span className="text-[10px] text-primary-500">Selected</span>}
+                                {isSwitchingTarget && <span className="text-[10px] text-primary-500">Switching</span>}
+                                {isLiveNode && !isSwitchingTarget && <span className="text-[10px] text-emerald-500">Live</span>}
+                                {showSelected && !isSwitchingTarget && <span className="text-[10px] text-primary-500">Selected</span>}
                                 {memberNode && renderLatency(memberNode.id)}
                               </button>
                             );
@@ -313,6 +321,7 @@ function NodeList({
                 {nodes.map((node) => {
                   const isSelected = node.id === selectedOutboundTag;
                   const isRuntimeNode = Boolean(isRunning && !isRuntimeTransitioning && runtimeResolvedNodeId === node.id);
+                  const isSwitchingTarget = runtimePhase === "switching" && selectedOutboundTag === node.id;
                   const showSelected = isSelected && !isRuntimeNode;
                   const protocolLabel = PROTOCOL_LABELS[node.node_type as ProtocolType] || node.node_type;
 
@@ -322,10 +331,12 @@ function NodeList({
                       className={`group flex cursor-pointer items-center gap-3 rounded-[18px] border px-3 py-2.5 transition-all ${
                         isRuntimeNode ? "border-emerald-500/30 bg-emerald-500/8" :
                         showSelected ? "border-primary-500/30 bg-primary-600/10" :
+                        isSwitchingTarget ? "border-primary-500/30 bg-primary-600/5" :
                         "subtle-row"
                       }`}
                       title={`${node.server}${node.port > 0 ? `:${node.port}` : ""}`}>
-                      {isRuntimeNode ? <CheckCircle2 size={18} className="shrink-0 text-emerald-500" /> :
+                      {isSwitchingTarget ? <Loader2 size={18} className="shrink-0 animate-spin text-primary-500" /> :
+                       isRuntimeNode ? <CheckCircle2 size={18} className="shrink-0 text-emerald-500" /> :
                        isSelected ? <CheckCircle2 size={18} className="shrink-0 text-primary-500" /> :
                        <div className="h-[18px] w-[18px] shrink-0 rounded-full border-2 border-border-muted" />}
                       <div className="min-w-0 flex-1">
@@ -334,8 +345,9 @@ function NodeList({
                         </div>
                         <div className="mt-1 flex items-center gap-2">
                           <span className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">{protocolLabel}</span>
-                          {isRuntimeNode && <span className="text-[10px] text-emerald-500">Live</span>}
-                          {showSelected && <span className="text-[10px] text-primary-500">Selected</span>}
+                          {isSwitchingTarget && <span className="text-[10px] text-primary-500">Switching</span>}
+                          {isRuntimeNode && !isSwitchingTarget && <span className="text-[10px] text-emerald-500">Live</span>}
+                          {showSelected && !isSwitchingTarget && <span className="text-[10px] text-primary-500">Selected</span>}
                           {renderLatency(node.id)}
                         </div>
                       </div>

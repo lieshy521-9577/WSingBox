@@ -1,0 +1,14 @@
+feat: loading states for core toggle and node switch, remove placeholder
+
+- Added `loading` prop to Sidebar and ConfigOverviewPanel.
+- Session card now shows spinner + "Processing" state while starting/stopping,
+  and ignores clicks during the transition.
+- Overview hero toggle shows a spinning loader on the thumb and is disabled
+  while the core transitions.
+- NodeList: nodes/groups matching `selectedOutboundTag` during `switching`
+  phase show a "Switching" badge with animated spinner.
+- Removed the "Switch to Nodes" placeholder from DNS/Rules/Rule Sets tabs;
+  Overview grid now becomes single-column when a non-nodes tab is active.
+- Added missing `.status-chip` / `.status-chip-primary` utility classes.
+
+TypeScript clean, production build passes.

@@ -165,6 +165,7 @@ function App() {
           onPageChange={setCurrentPage}
           isRunning={singbox.isRunning}
           runtimePhase={singbox.runtimePhase}
+          loading={singbox.loading}
           onToggleProxy={() => void singbox.toggleProxy()}
           onImportProfile={openImportProfileModal}
           configProfiles={singbox.configProfiles}
@@ -189,6 +190,7 @@ function App() {
                     selectedOutboundTag={singbox.selectedOutboundTag}
                     isRunning={singbox.isRunning}
                     onToggleProxy={() => void singbox.toggleProxy()}
+                    loading={singbox.loading}
                   />
                 </div>
               ) : (
