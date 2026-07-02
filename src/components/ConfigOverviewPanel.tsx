@@ -2,11 +2,11 @@ import { useMemo, useState } from "react";
 import {
   FileJson,
   Globe,
-  Layers3,
   Network,
   Pencil,
   Route,
-  Sparkles,
+  Shield,
+  Users,
 } from "lucide-react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
 
@@ -16,12 +16,16 @@ interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
   selectedOutboundTag: string | null;
+  isRunning?: boolean;
+  onToggleProxy?: () => void;
 }
 
 function ConfigOverviewPanel({
   overview,
   onEditRouteRule,
   selectedOutboundTag,
+  isRunning = false,
+  onToggleProxy,
 }: ConfigOverviewPanelProps) {
   const [activeSection, setActiveSection] = useState<OverviewSection>("nodes");
 
@@ -53,321 +57,306 @@ function ConfigOverviewPanel({
   ];
 
   return (
-    <section className="panel-card rounded-[22px] p-4">
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-2xl">
-            <p className="section-label mb-1.5">Configuration Overview</p>
-            <h2 className="text-[1.2rem] font-semibold tracking-tight text-content">
-              Runtime snapshot
-            </h2>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {sectionTabs.map((tab) => {
-              const active = activeSection === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveSection(tab.id)}
-                  className={`overview-subtab ${active ? "active" : ""}`}
-                  aria-pressed={active}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {tab.icon}
-                    <span>{tab.label}</span>
-                  </span>
-                  <span className="rounded-full bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
-                    {tab.count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+    <section className="space-y-[18px]">
+      {/* ── Hero Connection Card ── */}
+      <div className="flex flex-col items-center rounded-[20px] border border-border bg-gradient-to-br from-surface/70 to-surface-elevated/60 px-6 pb-5 pt-7 text-center">
+        <div className={`mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-lg transition-all ${
+          isRunning
+            ? "bg-emerald-500/20 text-emerald-400 shadow-emerald-500/20"
+            : "bg-muted text-muted-foreground shadow-transparent"
+        }`}>
+          <Shield size={36} strokeWidth={2} />
         </div>
 
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-          <SnapshotChip
-            icon={<Sparkles size={13} />}
-            label="Route target"
-            value={activeOutbound?.tag ?? "Not selected"}
-            detail={
-              activeOutbound
-                ? activeOutbound.is_group
-                  ? `${activeOutbound.outbound_type} group`
-                  : activeOutbound.outbound_type
-                : "Choose a node or group"
-            }
+        <h3 className="mb-1 text-xl font-bold tracking-tight text-content">
+          {isRunning ? "Connected" : "Disconnected"}
+        </h3>
+        <p className="mb-5 text-sm text-content-secondary">
+          {isRunning ? "sing-box core is running" : "Proxy is stopped"}
+        </p>
+
+        <label className="relative mb-5 inline-flex cursor-pointer items-center">
+          <input
+            type="checkbox"
+            checked={isRunning}
+            onChange={() => onToggleProxy?.()}
+            className="peer sr-only"
           />
-          <SnapshotChip
-            icon={<Network size={13} />}
-            label="Inbound"
-            value={primaryInbound?.inbound_type ?? "Unknown"}
-            detail={primaryInbound?.tag ?? "No inbound tag"}
-          />
-          <SnapshotChip
-            icon={<Globe size={13} />}
-            label="DNS"
-            value={dnsServer?.tag ?? "Unset"}
-            detail={dnsServer?.server ?? "No DNS server configured"}
-          />
-          <SnapshotChip
-            icon={<Layers3 size={13} />}
-            label="Nodes / Groups"
-            value={`${proxyNodes.length} / ${groups.length}`}
-            detail={`${rulesWithOutbound} rule targets`}
-          />
+          <span className="h-7 w-[52px] rounded-full border border-border/80 bg-muted transition-colors peer-checked:border-emerald-500/40 peer-checked:bg-emerald-500/20" />
+          <span className="pointer-events-none absolute left-[3px] h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-[26px] peer-checked:bg-emerald-500 dark:bg-slate-200" />
+        </label>
+
+        <div className="flex items-center justify-center gap-10">
+          <div className="text-center">
+            <span className="text-base font-bold tabular-nums text-content">{activeOutbound?.tag ?? "auto"}</span>
+            <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">Route</span>
+          </div>
+          <div className="text-center">
+            <span className="text-base font-bold tabular-nums text-content">--</span>
+            <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">Uptime</span>
+          </div>
+          <div className="text-center">
+            <span className="text-base font-bold tabular-nums text-content">--</span>
+            <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">Transfer</span>
+          </div>
         </div>
       </div>
 
-      <div className="mt-3 rounded-[20px] border border-border/70 bg-white/20 p-3 dark:bg-slate-950/15">
-        {activeSection === "nodes" && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.35fr)]">
-              <div className="space-y-2">
-                <SectionTitle
-                  title="Groups"
-                  meta={`${groups.length}`}
-                />
-                <div className="overflow-hidden rounded-[18px] border border-border/70">
-                  {groups.map((group, index) => {
-                    return (
-                      <div
-                        key={group.tag}
-                        className={`flex flex-wrap items-center gap-2 px-3 py-2.5 ${
-                          index !== groups.length - 1 ? "border-b border-border/60" : ""
-                        }`}
-                      >
-                        <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
-                          {group.outbound_type}
-                        </span>
-                        <p className="truncate text-sm font-medium text-content">{group.tag}</p>
-                        <span className="rounded-full bg-surface-elevated px-2 py-1 text-[10px] text-content-secondary">
-                          {group.group_members.length} members
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+      {/* ── Snapshot Tiles (horizontal layout) ── */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <SnapshotTile
+          icon={<Globe size={16} />}
+          label="Routing Targets"
+          value={`${proxyNodes.length} nodes`}
+          meta={`${groups.length} groups ready`}
+        />
+        <SnapshotTile
+          icon={<Shield size={16} />}
+          label="Inbounds"
+          value={primaryInbound?.inbound_type ?? "Unknown"}
+          meta={primaryInbound?.tag ?? "No inbound tag"}
+        />
+        <SnapshotTile
+          icon={<Network size={16} />}
+          label="DNS"
+          value={dnsServer?.dns_type ?? "Unset"}
+          meta={dnsServer?.server ?? "Not configured"}
+        />
+        <SnapshotTile
+          icon={<Users size={16} />}
+          label="Node Groups"
+          value={`${groups.length} groups`}
+          meta={groups.map((g) => g.tag).join(" · ") || "None"}
+        />
+      </div>
 
-              <div className="space-y-2">
-                <SectionTitle
-                  title="Nodes"
-                  meta={`${proxyNodes.length}`}
-                />
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                  {proxyNodes.map((node) => {
-                    const isSelected = selectedOutboundTag === node.tag;
+      {/* ── Section Tabs ── */}
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-muted">Configuration Overview</p>
+          <h2 className="text-[1.2rem] font-semibold tracking-tight text-content">
+            Runtime snapshot
+          </h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {sectionTabs.map((tab) => {
+            const active = activeSection === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSection(tab.id)}
+                className={`overview-subtab ${active ? "active" : ""}`}
+                aria-pressed={active}
+              >
+                <span className="flex items-center gap-1.5">
+                  {tab.icon}
+                  <span>{tab.label}</span>
+                </span>
+                <span className="rounded-full bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-                    return (
-                      <div
-                        key={node.tag}
-                        className={`subtle-row rounded-2xl px-3 py-2.5 ${
-                          isSelected ? "border-primary-500/30 bg-primary-600/10" : ""
-                        }`}
-                        title={`${node.server}${node.port ? `:${node.port}` : ""}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-                            {node.outbound_type}
-                          </span>
-                          <p className="truncate text-sm font-medium text-content">{node.tag}</p>
-                          {isSelected && <span className="text-[10px] text-primary-500">Active</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeSection === "dns" && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-              <CompactRow
-                label="Servers"
-                value={`${overview.dns_servers.length}`}
-                detail={`${dnsLocalCount} local / ${dnsRemoteCount} remote`}
-              />
-              <CompactRow
-                label="Primary"
-                value={dnsServer?.tag ?? "Unset"}
-                detail={dnsServer?.dns_type ?? "No DNS server configured"}
-              />
-              <CompactRow
-                label="Address"
-                value={dnsServer?.server ?? "Unavailable"}
-                detail="Top-level DNS server"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <SectionTitle
-                title="DNS Servers"
-                meta={`${overview.dns_servers.length}`}
-              />
-              <div className="overflow-hidden rounded-[18px] border border-border/70">
-                {overview.dns_servers.map((server, index) => (
-                  <div
-                    key={server.tag}
-                    className={`flex flex-col gap-1.5 px-3 py-2.5 ${
-                      index !== overview.dns_servers.length - 1 ? "border-b border-border/60" : ""
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
-                        {server.dns_type}
-                      </span>
-                      <p className="text-sm font-medium text-content">{server.tag}</p>
-                    </div>
-                    <p className="break-all text-xs leading-5 text-content-secondary">{server.server}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeSection === "rules" && (
-          <div className="space-y-2">
-            <SectionTitle
-              title="Editable Rules"
-              meta={`${rulesWithOutbound}`}
+      {/* ── Overview Grid ── */}
+      <div className="grid grid-cols-1 gap-[18px] xl:grid-cols-3">
+        <div className="min-w-0">
+          {activeSection === "nodes" && (
+            <OverviewCard
+              title="Groups"
+              count={groups.length}
+              items={groups.map((group) => ({
+                key: group.tag,
+                label: group.tag,
+                meta: `${group.group_members.length} members`,
+                badge: group.outbound_type,
+                badgeColor: "yellow",
+              }))}
             />
-            <div className="overflow-hidden rounded-[18px] border border-border/70">
-              {overview.route_rules.map((rule, idx) => (
-                <button
-                  key={`${rule.rule_type}-${idx}`}
-                  type="button"
-                  onClick={() => onEditRouteRule(idx, rule)}
-                  className={`flex w-full items-start justify-between gap-3 px-3 py-3 text-left transition-all hover:bg-white/5 dark:hover:bg-white/[0.03] ${
-                    idx !== overview.route_rules.length - 1 ? "border-b border-border/60" : ""
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-600 dark:text-purple-400">
-                        RULE
-                      </span>
-                      {rule.rule_type && (
-                        <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
-                          {rule.rule_type}
-                        </span>
-                      )}
-                      {rule.action && (
-                        <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
-                          {rule.action}
-                        </span>
-                      )}
-                      {rule.outbound && (
-                        <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
-                          {rule.outbound}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 text-sm font-medium text-content">{rule.summary}</p>
-                  </div>
-                  <Pencil size={14} className="mt-0.5 shrink-0 text-content-muted" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeSection === "ruleSets" && (
-          <div className="space-y-2">
-            <SectionTitle
+          )}
+          {activeSection === "dns" && (
+            <OverviewCard
+              title="DNS"
+              count={overview.dns_servers.length}
+              items={overview.dns_servers.map((server) => ({
+                key: server.tag,
+                label: server.tag,
+                meta: server.server,
+                badge: server.dns_type,
+                badgeColor: "green",
+              }))}
+            />
+          )}
+          {activeSection === "rules" && (
+            <OverviewCard
+              title="Route Rules"
+              count={rulesWithOutbound}
+              items={overview.route_rules.map((rule, idx) => ({
+                key: `${rule.rule_type}-${idx}`,
+                label: rule.summary,
+                meta: [rule.rule_type, rule.action, rule.outbound].filter(Boolean).join(" · "),
+                badge: "RULE",
+                badgeColor: "purple",
+                editable: true,
+                onEdit: () => onEditRouteRule(idx, rule),
+              }))}
+            />
+          )}
+          {activeSection === "ruleSets" && (
+            <OverviewCard
               title="Rule Sets"
-              meta={`${overview.rule_sets.length}`}
+              count={overview.rule_sets.length}
+              items={overview.rule_sets.map((ruleSet) => ({
+                key: ruleSet.tag,
+                label: ruleSet.tag,
+                meta: ruleSet.url,
+                badge: ruleSet.format,
+                badgeColor: "orange",
+              }))}
             />
-            <div className="overflow-hidden rounded-[18px] border border-border/70">
-              {overview.rule_sets.map((ruleSet, index) => (
-                <div
-                  key={ruleSet.tag}
-                  className={`flex flex-col gap-1.5 px-3 py-2.5 ${
-                    index !== overview.rule_sets.length - 1 ? "border-b border-border/60" : ""
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] font-medium text-orange-600 dark:text-orange-400">
-                      {ruleSet.rule_type}
-                    </span>
-                    <p className="text-sm font-medium text-content">{ruleSet.tag}</p>
-                    <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
-                      {ruleSet.format}
-                    </span>
-                  </div>
-                  <p className="break-all text-xs leading-5 text-content-secondary">{ruleSet.url}</p>
-                </div>
-              ))}
-            </div>
+          )}
+        </div>
+
+        {/* Middle column: proxy nodes summary */}
+        {activeSection === "nodes" && (
+          <div className="min-w-0">
+            <OverviewCard
+              title="Proxy Nodes"
+              count={proxyNodes.length}
+              items={proxyNodes.map((node) => ({
+                key: node.tag,
+                label: node.tag,
+                meta: `${node.server}${node.port ? `:${node.port}` : ""}`,
+                badge: node.outbound_type,
+                badgeColor: "blue",
+                selected: selectedOutboundTag === node.tag,
+              }))}
+            />
           </div>
         )}
+
+        {/* Right column: status / info */}
+        <div className="min-w-0">
+          <div className="rounded-[18px] border border-border/70 bg-surface/60 p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-content">Status</h4>
+            </div>
+            <div className="space-y-3">
+              <Kv label="Connection" value={isRunning ? "Running" : "Stopped"} />
+              <Kv label="Selected Route" value={activeOutbound?.tag ?? "None"} />
+              <Kv label="Inbound Type" value={primaryInbound?.inbound_type ?? "Unknown"} />
+              <Kv label="Listen Address" value={primaryInbound ? `${primaryInbound.tag}` : "Not set"} />
+              <Kv label="DNS Servers" value={`${overview.dns_servers.length}`} />
+              <Kv label="DNS Strategy" value={`${dnsLocalCount} local / ${dnsRemoteCount} remote`} />
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-function SnapshotChip({
+/* ── Sub-components ── */
+
+function SnapshotTile({
   icon,
   label,
   value,
-  detail,
+  meta,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
-  detail: string;
+  meta: string;
 }) {
   return (
-    <div className="surface-block rounded-[18px] px-3 py-2.5">
-      <div className="flex items-start gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-elevated text-content-secondary">
-          {icon}
-        </span>
-        <div className="min-w-0">
-          <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
-          <p className="truncate text-sm font-medium text-content">{value}</p>
-          <p className="mt-0.5 truncate text-[11px] text-content-secondary">{detail}</p>
-        </div>
+    <div className="flex items-center gap-[14px] rounded-[14px] border border-border-muted bg-muted/35 px-4 py-4 transition-all hover:bg-muted/55 hover:-translate-y-[1px]">
+      <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl bg-primary-500/12 text-primary-500">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-content-muted">{label}</p>
+        <p className="mt-0.5 text-base font-bold text-content">{value}</p>
+        <p className="mt-0.5 truncate text-[11px] text-content-secondary">{meta}</p>
       </div>
     </div>
   );
 }
 
-function CompactRow({
-  label,
-  value,
-  detail,
+function OverviewCard({
+  title,
+  count,
+  items,
 }: {
-  label: string;
-  value: string;
-  detail: string;
+  title: string;
+  count: number;
+  items: Array<{
+    key: string;
+    label: string;
+    meta: string;
+    badge: string;
+    badgeColor: "yellow" | "green" | "blue" | "purple" | "orange";
+    selected?: boolean;
+    editable?: boolean;
+    onEdit?: () => void;
+  }>;
 }) {
+  const badgeColors: Record<string, string> = {
+    yellow: "bg-yellow-500/20 text-yellow-600 dark:text-yellow-400",
+    green: "bg-green-500/20 text-green-600 dark:text-green-400",
+    blue: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+    purple: "bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    orange: "bg-orange-500/20 text-orange-600 dark:text-orange-400",
+  };
+
   return (
-    <div className="subtle-row rounded-2xl px-3 py-2.5">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
-      <p className="mt-1 truncate text-sm font-medium text-content">{value}</p>
-      <p className="mt-1 truncate text-[11px] text-content-secondary">{detail}</p>
+    <div className="rounded-[18px] border border-border/70 bg-surface/60">
+      <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <h4 className="text-sm font-semibold text-content">{title}</h4>
+        <span className="status-chip">{count}</span>
+      </div>
+      <div className="max-h-[400px] overflow-auto">
+        {items.map((item, i) => (
+          <div
+            key={item.key}
+            className={`flex items-start justify-between gap-3 px-4 py-2.5 transition-colors ${
+              item.selected ? "bg-primary-600/10" : "hover:bg-muted/30"
+            } ${i !== items.length - 1 ? "border-b border-border/60" : ""}`}
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeColors[item.badgeColor]}`}>
+                  {item.badge}
+                </span>
+                <p className="truncate text-sm font-medium text-content">{item.label}</p>
+              </div>
+              <p className="mt-1 truncate text-xs text-content-secondary">{item.meta}</p>
+            </div>
+            {item.editable && item.onEdit && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); item.onEdit?.(); }}
+                className="mt-0.5 shrink-0 rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
+              >
+                <Pencil size={14} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-function SectionTitle({
-  title,
-  meta,
-}: {
-  title: string;
-  meta: string;
-}) {
+function Kv({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <h4 className="text-sm font-semibold text-content">{title}</h4>
-      <span className="status-chip">{meta}</span>
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">{label}</p>
+      <p className="mt-1 text-sm font-medium text-content">{value}</p>
     </div>
   );
 }

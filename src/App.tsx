@@ -187,6 +187,8 @@ function App() {
                     overview={configOverview}
                     onEditRouteRule={handleEditRouteRule}
                     selectedOutboundTag={singbox.selectedOutboundTag}
+                    isRunning={singbox.isRunning}
+                    onToggleProxy={() => void singbox.toggleProxy()}
                   />
                 </div>
               ) : (
