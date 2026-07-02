@@ -13,6 +13,7 @@ import RouteRuleModal from "./components/RouteRuleModal";
 import AboutPanel from "./components/AboutPanel";
 import StartupTipsModal from "./components/StartupTipsModal";
 import ImportProfileModal from "./components/ImportProfileModal";
+import Toast, { ToastMessage } from "./components/Toast";
 import { useSingbox } from "./hooks/useSingbox";
 import { useTheme } from "./hooks/useTheme";
 import { ConfigOverview, ImportValidationReport, ProxyNode, RouteRuleInfo } from "./types";
@@ -34,6 +35,15 @@ function App() {
   const [suppressStartupTips, setSuppressStartupTips] = useState(true);
   const [showImportProfileModal, setShowImportProfileModal] = useState(false);
   const [editingConfigProfile, setEditingConfigProfile] = useState<{ id: string; name: string; value: string } | null>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  let toastIdCounter = 0;
+  const addToast = useCallback((type: "success" | "error", message: string) => {
+    const id = Date.now() + (toastIdCounter++);
+    setToasts((prev) => [...prev, { id, type, message }]);
+  }, []);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
   const singbox = useSingbox();
   const { theme, toggleTheme } = useTheme();
 

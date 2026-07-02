@@ -109,21 +109,21 @@ function LogViewer() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setPaused((v) => !v)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-2.5 py-1.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
           >
             {paused ? <Play size={12} /> : <Pause size={12} />}
             {paused ? "Resume" : "Pause"}
           </button>
           <button
             onClick={() => void copyLogs()}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-2.5 py-1.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
           >
             <Copy size={12} />
             {copied ? "Copied" : "Copy"}
           </button>
           <button
             onClick={() => setAutoScroll((v) => !v)}
-            className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] transition-colors ${
+            className={`inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border px-2.5 text-[11px] transition-colors ${
               autoScroll ? "border-sky-500/40 bg-sky-500/10 text-sky-300" : "border-slate-700 text-slate-300 hover:bg-white/5 hover:text-white"
             }`}
           >
@@ -132,7 +132,7 @@ function LogViewer() {
           </button>
           <button
             onClick={() => void clearLogs()}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-2.5 py-1.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
           >
             <Trash2 size={12} />
             Clear
