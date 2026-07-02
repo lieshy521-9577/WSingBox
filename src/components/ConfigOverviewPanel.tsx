@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import {
   FileJson,
   Globe,
@@ -8,8 +8,10 @@ import {
   Shield,
   Users,
   Loader2,
+  Zap,
 } from "lucide-react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
+import { RuntimePhase } from "../hooks/useSingbox";
 
 type OverviewSection = "nodes" | "dns" | "rules" | "ruleSets";
 
@@ -18,6 +20,7 @@ interface ConfigOverviewPanelProps {
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
   selectedOutboundTag: string | null;
   isRunning?: boolean;
+  runtimePhase?: RuntimePhase;
   onToggleProxy?: () => void;
   loading?: boolean;
 }
@@ -27,10 +30,14 @@ function ConfigOverviewPanel({
   onEditRouteRule,
   selectedOutboundTag,
   isRunning = false,
+  runtimePhase = "stopped",
   onToggleProxy,
   loading = false,
 }: ConfigOverviewPanelProps) {
   const [activeSection, setActiveSection] = useState<OverviewSection>("nodes");
+  const [heroAnim, setHeroAnim] = useState<"idle" | "starting" | "stopping" | "running" | "stopped">(isRunning ? "running" : "stopped");
+  const [statusText, setStatusText] = useState(isRunning ? "Connected" : "Disconnected");
+  const prevPhaseRef = useRef<RuntimePhase>(runtimePhase);
 
   const proxyNodes = useMemo(
     () =>
@@ -44,6 +51,37 @@ function ConfigOverviewPanel({
   const primaryInbound = overview.inbounds[0] ?? null;
   const activeOutbound = overview.outbounds.find((item) => item.tag === selectedOutboundTag) ?? null;
   const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
+
+  // ── Phase-driven animation state ──
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    prevPhaseRef.current = runtimePhase;
+
+    if (prev === runtimePhase) return;
+
+    if (runtimePhase === "starting") {
+      setHeroAnim("starting");
+      setStatusText("Connecting...");
+    } else if (runtimePhase === "running" && prev === "starting") {
+      setHeroAnim("running");
+      setStatusText("Connected");
+    } else if (runtimePhase === "stopping") {
+      setHeroAnim("stopping");
+      setStatusText("Stopping...");
+    } else if (runtimePhase === "stopped") {
+      setHeroAnim("stopped");
+      setStatusText("Disconnected");
+    }
+  }, [runtimePhase]);
+
+  // ── Phase-based status line ──
+  const subtitle = (() => {
+    if (runtimePhase === "starting") return "Core is starting up…";
+    if (runtimePhase === "stopping") return "Shutting down…";
+    if (runtimePhase === "error") return "Core encountered an error";
+    if (runtimePhase === "switching") return "Switching nodes…";
+    return isRunning ? "sing-box core is running" : "Proxy is stopped";
+  })();
 
   const sectionTabs: Array<{
     id: OverviewSection;
@@ -61,36 +99,81 @@ function ConfigOverviewPanel({
     <section className="space-y-[18px]">
       {/* ── Hero Connection Card ── */}
       <div className="flex flex-col items-center rounded-[20px] border border-border bg-gradient-to-br from-surface/70 to-surface-elevated/60 px-6 pb-5 pt-7 text-center">
+        {/* Shield icon with phase-driven glow + animation */}
         <div
-          className={`mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-lg transition-all ${
-            isRunning
-              ? "bg-emerald-500/20 text-emerald-400 shadow-emerald-500/20"
-              : "bg-muted text-muted-foreground shadow-transparent"
+          className={`relative mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-[24px] transition-all duration-500 ${
+            heroAnim === "starting" ? "bg-emerald-500/25 text-emerald-400 shadow-lg shadow-emerald-500/30 animate-hero-glow-in" :
+            heroAnim === "running" ? "bg-emerald-500/20 text-emerald-400 shadow-lg shadow-emerald-500/20" :
+            heroAnim === "stopping" ? "bg-emerald-500/10 text-emerald-400/60 animate-hero-ring-collapse" :
+            "bg-muted text-muted-foreground shadow-none"
           }`}
         >
-          <Shield size={36} strokeWidth={2} />
+          {/* Start pulse ring */}
+          {heroAnim === "starting" && (
+            <span className="pointer-events-none absolute inset-0 rounded-[24px] border-2 border-emerald-400/40 animate-ping" />
+          )}
+          {heroAnim === "starting" ? (
+            <Zap size={36} strokeWidth={2} className="animate-hero-pulse-on" />
+          ) : (
+            <Shield size={36} strokeWidth={2} />
+          )}
         </div>
 
-        <h3 className="mb-1 text-xl font-bold tracking-tight text-content">
-          {isRunning ? "Connected" : "Disconnected"}
+        {/* Status text with fade animation */}
+        <h3
+          key={statusText}
+          className={`mb-1 animate-status-text-fade text-xl font-bold tracking-tight transition-colors duration-500 ${
+            heroAnim === "starting" || heroAnim === "running"
+              ? "text-emerald-600 dark:text-emerald-400"
+              : heroAnim === "stopping"
+                ? "text-content-secondary"
+                : "text-content"
+          }`}
+        >
+          {statusText}
         </h3>
-        <p className="mb-5 text-sm text-content-secondary">
-          {isRunning ? "sing-box core is running" : "Proxy is stopped"}
+        <p className="mb-5 text-sm text-content-secondary transition-colors duration-500">
+          {subtitle}
         </p>
 
-        <label className="relative mb-5 inline-flex cursor-pointer items-center">
-          <input
-            type="checkbox"
-            checked={isRunning}
-            onChange={() => !loading && onToggleProxy?.()}
-            disabled={loading}
-            className="peer sr-only"
-          />
-          <span className="h-7 w-[52px] rounded-full border border-border/80 bg-muted transition-colors peer-checked:border-emerald-500/40 peer-checked:bg-emerald-500/20" />
-          <span className="pointer-events-none absolute left-[3px] flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-[26px] peer-checked:bg-emerald-500 dark:bg-slate-200">
-            {loading && <Loader2 size={11} className="animate-spin text-content-muted" />}
-          </span>
-        </label>
+        {/* Toggle with transition progress bar */}
+        <div className="mb-5 flex flex-col items-center gap-2">
+          <label className="relative inline-flex cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={isRunning}
+              onChange={() => !loading && onToggleProxy?.()}
+              disabled={loading}
+              className="peer sr-only"
+            />
+            <span className={`h-7 w-[52px] rounded-full border transition-all duration-500 ${
+              heroAnim === "starting" ? "border-emerald-500/60 bg-emerald-500/30" :
+              heroAnim === "running" ? "border-emerald-500/40 bg-emerald-500/20" :
+              heroAnim === "stopping" ? "border-amber-500/40 bg-amber-500/10" :
+              "border-border/80 bg-muted"
+            }`} />
+            <span className={`pointer-events-none absolute left-[3px] flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-all duration-500 dark:bg-slate-200 ${
+              heroAnim === "starting" ? "translate-x-[26px] bg-emerald-500" :
+              heroAnim === "running" ? "translate-x-[26px] bg-emerald-500" :
+              heroAnim === "stopping" ? "translate-x-[26px] bg-amber-500" :
+              "translate-x-0"
+            }`}>
+              {loading && <Loader2 size={11} className="animate-spin text-white" />}
+            </span>
+          </label>
+
+          {/* Transition progress bar */}
+          {loading && (
+            <div className="h-1 w-[52px] overflow-hidden rounded-full bg-muted">
+              <div
+                className={`h-full rounded-full transition-all duration-1000 ${
+                  heroAnim === "starting" ? "animate-hero-progress bg-emerald-500" :
+                  "animate-hero-progress bg-amber-500"
+                }`}
+              />
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center justify-center gap-10">
           <div className="text-center">

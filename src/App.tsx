@@ -189,6 +189,7 @@ function App() {
                     onEditRouteRule={handleEditRouteRule}
                     selectedOutboundTag={singbox.selectedOutboundTag}
                     isRunning={singbox.isRunning}
+                    runtimePhase={singbox.runtimePhase}
                     onToggleProxy={() => void singbox.toggleProxy()}
                     loading={singbox.loading}
                   />

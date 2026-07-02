@@ -1,0 +1,21 @@
+feat: smooth hero card start/stop animations on Overview page
+
+Hero card now uses runtimePhase to drive transition animations:
+
+Start animation (starting phase):
+- Shield container: green glow pulse with ping ring + Zap icon bounce
+- Status text: fades Disconnected -> Connecting... -> Connected
+- Toggle track: emerald gradient, thumb slides right with loader
+- Progress bar fills 3% to 92% over 3s
+
+Stop animation (stopping phase):
+- Shield container: ring collapses outward with green-to-gray fade
+- Status text: fades Connected -> Stopping... -> Disconnected
+- Toggle track: amber transition, thumb slides left with loader
+- Same progress bar for visual feedback
+
+Subtitle adapts per phase (Core is starting up, Shutting down, etc).
+CSS keyframes: hero-glow-in/out, hero-pulse-on, hero-ring-collapse,
+status-text-fade, hero-progress.
+
+TypeScript clean, production build passes.
