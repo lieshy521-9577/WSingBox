@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import {
+  CheckCircle2,
   FileJson,
   Globe,
   Network,
@@ -19,6 +20,7 @@ interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
   selectedOutboundTag: string | null;
+  onSelectOutbound?: (tag: string) => void;
   runtimeDebug?: RuntimeDebugSnapshot | null;
   isRunning?: boolean;
   runtimePhase?: RuntimePhase;
@@ -30,6 +32,7 @@ function ConfigOverviewPanel({
   overview,
   onEditRouteRule,
   selectedOutboundTag,
+  onSelectOutbound,
   runtimeDebug,
   isRunning = false,
   runtimePhase = "stopped",
@@ -55,6 +58,10 @@ function ConfigOverviewPanel({
   const actualRuntimeRoute = isRunning ? runtimeDebug?.active_leaf_outbound || runtimeDebug?.top_selector_default || null : null;
   const routeDisplay = actualRuntimeRoute || activeOutbound?.tag || "auto";
   const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
+
+  const isRuntimeTransitioning = runtimePhase === "starting" || runtimePhase === "switching" || runtimePhase === "stopping";
+  const runtimeGroupTag = runtimeDebug?.top_selector_default || null;
+  const runtimeLeafTag = runtimeDebug?.active_leaf_outbound || null;
 
   // ── Phase-driven animation state ──
   useEffect(() => {
@@ -262,13 +269,22 @@ function ConfigOverviewPanel({
             <OverviewCard
               title="Groups"
               count={groups.length}
-              items={groups.map((group) => ({
-                key: group.tag,
-                label: group.tag,
-                meta: `${group.group_members.length} members`,
-                badge: group.outbound_type,
-                badgeColor: "yellow",
-              }))}
+              items={groups.map((group) => {
+                const isLiveGroup = isRunning && !isRuntimeTransitioning && runtimeGroupTag === group.tag;
+                const isSelected = selectedOutboundTag === group.tag;
+                const isSwitching = runtimePhase === "switching" && selectedOutboundTag === group.tag;
+                return {
+                  key: group.tag,
+                  label: group.tag,
+                  meta: `${group.group_members.length} members`,
+                  badge: group.outbound_type,
+                  badgeColor: "yellow" as const,
+                  selected: isSelected,
+                  isLive: isLiveGroup,
+                  isSwitching,
+                  onSelect: onSelectOutbound ? () => onSelectOutbound(group.tag) : undefined,
+                };
+              })}
             />
           )}
           {activeSection === "dns" && (
@@ -320,14 +336,22 @@ function ConfigOverviewPanel({
             <OverviewCard
               title="Proxy Nodes"
               count={proxyNodes.length}
-              items={proxyNodes.map((node) => ({
-                key: node.tag,
-                label: node.tag,
-                meta: `${node.server}${node.port ? `:${node.port}` : ""}`,
-                badge: node.outbound_type,
-                badgeColor: "blue",
-                selected: selectedOutboundTag === node.tag,
-              }))}
+              items={proxyNodes.map((node) => {
+                const isLiveNode = isRunning && !isRuntimeTransitioning && runtimeLeafTag === node.tag;
+                const isSelected = selectedOutboundTag === node.tag;
+                const isSwitching = runtimePhase === "switching" && selectedOutboundTag === node.tag;
+                return {
+                  key: node.tag,
+                  label: node.tag,
+                  meta: `${node.server}${node.port ? `:${node.port}` : ""}`,
+                  badge: node.outbound_type,
+                  badgeColor: "blue" as const,
+                  selected: isSelected,
+                  isLive: isLiveNode,
+                  isSwitching,
+                  onSelect: onSelectOutbound ? () => onSelectOutbound(node.tag) : undefined,
+                };
+              })}
             />
           </div>
         )}
@@ -377,6 +401,9 @@ function OverviewCard({
     badge: string;
     badgeColor: "yellow" | "green" | "blue" | "purple" | "orange";
     selected?: boolean;
+    isLive?: boolean;
+    isSwitching?: boolean;
+    onSelect?: () => void;
     editable?: boolean;
     onEdit?: () => void;
   }>;
@@ -396,36 +423,53 @@ function OverviewCard({
         <span className="status-chip">{count}</span>
       </div>
       <div className="max-h-[400px] overflow-auto">
-        {items.map((item, i) => (
-          <div
-            key={item.key}
-            className={`flex items-start justify-between gap-3 px-4 py-2.5 transition-colors ${
-              item.selected ? "bg-primary-600/10" : "hover:bg-muted/30"
-            } ${i !== items.length - 1 ? "border-b border-border/60" : ""}`}
-          >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeColors[item.badgeColor]}`}>
-                  {item.badge}
-                </span>
-                <p className="truncate text-sm font-medium text-content">{item.label}</p>
+        {items.map((item, i) => {
+          const clickable = !!item.onSelect;
+          return (
+            <div
+              key={item.key}
+              onClick={() => item.onSelect?.()}
+              className={`flex items-start justify-between gap-3 px-4 py-2.5 transition-colors ${
+                item.isLive ? "bg-emerald-500/10 dark:bg-emerald-500/8" :
+                item.isSwitching ? "bg-primary-600/5" :
+                item.selected ? "bg-primary-600/10" :
+                "hover:bg-muted/30"
+              } ${clickable ? "cursor-pointer" : ""} ${i !== items.length - 1 ? "border-b border-border/60" : ""}`}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {item.isSwitching ? (
+                    <Loader2 size={14} className="shrink-0 animate-spin text-primary-500" />
+                  ) : item.isLive ? (
+                    <CheckCircle2 size={14} className="shrink-0 text-emerald-500" />
+                  ) : item.selected ? (
+                    <CheckCircle2 size={14} className="shrink-0 text-primary-500" />
+                  ) : null}
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeColors[item.badgeColor]}`}>
+                    {item.badge}
+                  </span>
+                  <p className="truncate text-sm font-medium text-content">{item.label}</p>
+                  {item.isSwitching && <span className="text-[10px] text-primary-500">Switching</span>}
+                  {item.isLive && !item.isSwitching && <span className="text-[10px] text-emerald-500">Live</span>}
+                  {item.selected && !item.isLive && !item.isSwitching && <span className="text-[10px] text-primary-500">Selected</span>}
+                </div>
+                <p className="mt-1 truncate text-xs text-content-secondary">{item.meta}</p>
               </div>
-              <p className="mt-1 truncate text-xs text-content-secondary">{item.meta}</p>
+              {item.editable && item.onEdit && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    item.onEdit?.();
+                  }}
+                  className="mt-0.5 shrink-0 rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
             </div>
-            {item.editable && item.onEdit && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  item.onEdit?.();
-                }}
-                className="mt-0.5 shrink-0 rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
-              >
-                <Pencil size={14} />
-              </button>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

@@ -220,6 +220,7 @@ function App() {
                     overview={configOverview}
                     onEditRouteRule={handleEditRouteRule}
                     selectedOutboundTag={singbox.selectedOutboundTag}
+                    onSelectOutbound={(tag) => void singbox.setSelectedOutboundTag(tag)}
                     runtimeDebug={singbox.runtimeDebug}
                     isRunning={singbox.isRunning}
                     runtimePhase={singbox.runtimePhase}
