@@ -1,0 +1,1814 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SingBox Client — Prototype</title>
+  <style>
+    :root {
+      --bg-base: 11 18 32;
+      --bg-surface: 17 24 39;
+      --bg-elevated: 24 34 51;
+      --bg-muted: 30 41 59;
+      --border: 30 41 59;
+      --border-muted: 51 65 85;
+      --text-primary: 248 250 252;
+      --text-secondary: 203 213 225;
+      --text-muted: 148 163 184;
+      --primary-100: 30 64 175;
+      --primary-500: 59 130 246;
+      --primary-600: 37 99 235;
+      --primary-700: 29 78 216;
+      --success: 52 211 153;
+      --warning: 251 191 36;
+      --error: 248 113 113;
+      --info: 96 165 250;
+    }
+
+    [data-theme="light"] {
+      --bg-base: 239 244 250;
+      --bg-surface: 255 255 255;
+      --bg-elevated: 247 250 253;
+      --bg-muted: 237 242 248;
+      --border: 194 206 221;
+      --border-muted: 223 231 241;
+      --text-primary: 15 23 42;
+      --text-secondary: 68 87 114;
+      --text-muted: 114 134 160;
+      --primary-100: 219 234 254;
+      --primary-500: 59 130 246;
+      --primary-600: 37 99 235;
+      --primary-700: 29 78 216;
+      --success: 16 185 129;
+      --warning: 245 158 11;
+      --error: 239 68 68;
+      --info: 59 130 246;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: "Aptos", "Segoe UI Variable", "Segoe UI", "SF Pro Display", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(56, 189, 248, 0.08), transparent 24%),
+        radial-gradient(circle at 88% 10%, rgba(59, 130, 246, 0.09), transparent 20%),
+        linear-gradient(145deg, rgb(2 6 23) 0%, rgb(10 17 33) 38%, rgb(11 18 32) 100%);
+      color: rgb(var(--text-primary));
+    }
+
+    [data-theme="light"] body {
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.98), transparent 24%),
+        radial-gradient(circle at 85% 14%, rgba(59, 130, 246, 0.08), transparent 18%),
+        linear-gradient(135deg, rgb(247 250 253) 0%, rgb(var(--bg-base)) 42%, rgb(233 240 248) 100%);
+    }
+
+    button { font-family: inherit; cursor: pointer; }
+
+    .app { display: flex; flex-direction: column; height: 100vh; padding: 10px; }
+
+    .shell {
+      display: flex; flex: 1; gap: 10px; min-height: 0;
+    }
+
+    .workspace {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .titlebar {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 42px; padding: 0 14px; margin-bottom: 10px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(var(--bg-surface), 0.98), rgba(var(--bg-elevated), 0.96));
+      border: 1px solid rgb(var(--border));
+    }
+
+    .titlebar-left { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; }
+
+    .titlebar-right { display: flex; align-items: center; gap: 6px; }
+
+    .icon-btn {
+      width: 28px; height: 28px; border-radius: 8px; border: 0;
+      background: transparent; color: rgb(var(--text-secondary));
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: all 120ms ease;
+    }
+
+    .icon-btn:hover { background: rgb(var(--bg-muted)); color: rgb(var(--text-primary)); }
+
+    .sidebar {
+      width: 240px; min-width: 220px; max-width: 260px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(var(--bg-surface), 0.98), rgba(var(--bg-elevated), 0.96));
+      border: 1px solid rgb(var(--border));
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    .sidebar-section { padding: 14px; }
+    .sidebar-section + .sidebar-section { border-top: 1px solid rgb(var(--border)); }
+
+    .section-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+      color: rgb(var(--text-muted)); margin-bottom: 8px;
+    }
+
+    .session-card {
+      border-radius: 16px; padding: 12px;
+      background: rgb(var(--bg-muted) / 0.5); border: 1px solid rgb(var(--border-muted));
+      cursor: pointer; transition: all 150ms ease; user-select: none;
+    }
+    .session-card:hover { border-color: rgb(var(--primary-500) / 0.3); background: rgb(var(--bg-muted) / 0.7); }
+    .session-card:active { transform: scale(0.985); }
+
+    .session-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .status-dot.live { background: rgb(var(--success)); box-shadow: 0 0 8px rgb(var(--success)); }
+    .status-dot.error { background: rgb(var(--error)); }
+
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+      background: rgb(var(--success) / 0.12); color: rgb(var(--success));
+    }
+
+    .status-pill.warning { background: rgb(var(--warning) / 0.12); color: rgb(var(--warning)); }
+    .status-pill.error { background: rgb(var(--error) / 0.12); color: rgb(var(--error)); }
+    .status-pill.info { background: rgb(var(--info) / 0.12); color: rgb(var(--info)); }
+
+    .session-metrics { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+    .metric-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px 8px; border-radius: 999px; font-size: 10px;
+      background: rgb(var(--bg-surface) / 0.6); border: 1px solid rgb(var(--border-muted));
+      color: rgb(var(--text-secondary));
+    }
+
+    .metric-chip strong { color: rgb(var(--text-primary)); }
+
+    .nav-list { display: flex; flex-direction: column; gap: 6px; }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 12px;
+      width: 100%; padding: 10px 12px; border-radius: 14px;
+      border: 1px solid transparent; background: transparent;
+      color: rgb(var(--text-secondary)); font-size: 14px; font-weight: 600;
+      transition: all 120ms ease; text-align: left;
+    }
+
+    .nav-item:hover { background: rgb(var(--bg-elevated)); color: rgb(var(--text-primary)); }
+
+    .nav-item.active {
+      background: rgb(var(--primary-600) / 0.12); color: rgb(var(--primary-500));
+      border-color: rgb(var(--primary-500) / 0.2);
+    }
+
+    .nav-icon {
+      width: 32px; height: 32px; border-radius: 10px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgb(var(--bg-muted) / 0.5);
+    }
+
+    .nav-item.active .nav-icon { background: rgb(var(--primary-500) / 0.15); }
+
+    .import-btn {
+      width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 10px; border-radius: 12px; border: 0;
+      background: linear-gradient(135deg, rgb(var(--primary-500)), rgb(var(--primary-700)));
+      color: white; font-size: 13px; font-weight: 600;
+      box-shadow: 0 10px 24px rgb(var(--primary-600) / 0.25);
+      transition: all 120ms ease;
+    }
+
+    .import-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgb(var(--primary-600) / 0.3); }
+
+    .profile-selector { position: relative; margin-top: 8px; }
+
+    .profile-trigger {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; padding: 10px 12px; border-radius: 14px;
+      background: rgb(var(--bg-muted)); border: 1px solid rgb(var(--border-muted));
+      color: rgb(var(--text-primary)); cursor: pointer;
+      transition: all 120ms ease; text-align: left;
+    }
+
+    .profile-trigger:hover {
+      background: rgb(var(--bg-elevated));
+      border-color: rgb(var(--border));
+    }
+
+    .profile-trigger.open {
+      border-color: rgb(var(--primary-500) / 0.4);
+      background: rgb(var(--primary-500) / 0.08);
+    }
+
+    .profile-trigger-left {
+      display: flex; align-items: center; gap: 10px; min-width: 0;
+    }
+
+    .profile-trigger-left svg { flex-shrink: 0; color: rgb(var(--primary-500)); }
+
+    .profile-trigger-name {
+      font-size: 13px; font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .profile-trigger-meta {
+      flex-shrink: 0; font-size: 9px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; padding: 2px 6px; border-radius: 999px;
+      background: rgb(var(--bg-base)); color: rgb(var(--text-muted));
+    }
+
+    .profile-trigger-meta.url {
+      background: rgb(var(--success) / 0.1); color: rgb(var(--success));
+    }
+
+    .profile-trigger-chevron {
+      flex-shrink: 0; color: rgb(var(--text-muted));
+      transition: transform 200ms ease;
+    }
+
+    .profile-trigger.open .profile-trigger-chevron { transform: rotate(180deg); }
+
+    .profile-dropdown {
+      position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+      max-height: 0; overflow: hidden; opacity: 0;
+      transform: translateY(8px);
+      transition: all 200ms ease;
+      z-index: 100;
+    }
+
+    .profile-dropdown.open {
+      max-height: 320px; opacity: 1; transform: translateY(0);
+      overflow: visible;
+    }
+
+    .profile-dropdown-inner {
+      padding: 6px; border-radius: 16px;
+      background: rgb(var(--bg-surface));
+      border: 1px solid rgb(var(--border));
+      box-shadow: 0 -12px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.03);
+      display: flex; flex-direction: column; gap: 2px;
+    }
+
+    .profile-dropdown-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px 8px; font-size: 10px; font-weight: 700;
+      color: rgb(var(--text-muted)); text-transform: uppercase; letter-spacing: 0.08em;
+      border-bottom: 1px solid rgb(var(--border-muted)); margin-bottom: 4px;
+    }
+
+    .profile-option {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 10px; border-radius: 10px; cursor: pointer;
+      border: 1px solid transparent; transition: all 120ms ease;
+    }
+
+    .profile-option:hover {
+      background: rgb(var(--bg-elevated)); border-color: rgb(var(--border-muted));
+    }
+
+    .profile-option.active {
+      background: rgb(var(--primary-500) / 0.1); border-color: rgb(var(--primary-500) / 0.2);
+    }
+
+    .profile-option-left {
+      display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1;
+    }
+
+    .profile-option-left svg { flex-shrink: 0; color: rgb(var(--text-muted)); }
+    .profile-option.active .profile-option-left svg { color: rgb(var(--primary-500)); }
+
+    .profile-option-name {
+      font-size: 13px; font-weight: 600; color: rgb(var(--text-primary));
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .profile-option.active .profile-option-name { color: rgb(var(--primary-500)); }
+
+    .profile-option-actions {
+      display: flex; align-items: center; gap: 3px; flex-shrink: 0; margin-left: 8px;
+      opacity: 0; transform: translateX(4px);
+      transition: all 150ms ease;
+    }
+
+    .profile-option:hover .profile-option-actions { opacity: 1; transform: translateX(0); }
+
+    .profile-option-action-btn {
+      width: 26px; height: 26px; border-radius: 7px; border: 0;
+      background: rgb(var(--bg-muted)); color: rgb(var(--text-secondary));
+      display: inline-flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: all 120ms ease;
+    }
+
+    .profile-option-action-btn:hover {
+      background: rgb(var(--primary-500) / 0.12); color: rgb(var(--primary-500));
+    }
+
+    .profile-option-action-btn.export:hover {
+      background: rgb(var(--success) / 0.12); color: rgb(var(--success));
+    }
+
+    [data-theme="light"] .profile-dropdown-inner {
+      box-shadow: 0 -12px 40px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.03);
+    }
+
+    [data-theme="light"] .profile-option.active .profile-option-name { color: rgb(var(--primary-700)); }
+      flex: 1; min-width: 0; border-radius: 22px;
+      background: linear-gradient(180deg, rgba(var(--bg-surface), 0.95), rgba(var(--bg-elevated), 0.96));
+      border: 1px solid rgb(var(--border));
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    .switch {
+      appearance: none; width: 48px; height: 26px; border-radius: 999px;
+      background: rgb(var(--bg-muted)); border: 1px solid rgb(var(--border-muted));
+      position: relative; cursor: pointer; transition: all 120ms ease;
+    }
+
+    .switch::after {
+      content: ""; position: absolute; top: 2px; left: 2px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      transition: transform 120ms ease;
+    }
+
+    .switch:checked { background: rgb(var(--primary-600)); border-color: rgb(var(--primary-600)); }
+    .switch:checked::after { transform: translateX(22px); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+      border: 1px solid transparent; transition: all 120ms ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, rgb(var(--primary-500)), rgb(var(--primary-700)));
+      color: white; box-shadow: 0 8px 20px rgb(var(--primary-600) / 0.22);
+    }
+
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgb(var(--primary-600) / 0.28); }
+
+    .btn-secondary {
+      background: rgb(var(--bg-elevated)); border-color: rgb(var(--border-muted));
+      color: rgb(var(--text-secondary));
+    }
+
+    .btn-secondary:hover { background: rgb(var(--bg-muted)); color: rgb(var(--text-primary)); }
+
+    .page { flex: 1; overflow: auto; padding: 18px; }
+
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+    .page-title { font-size: 20px; font-weight: 700; }
+    .page-subtitle { font-size: 13px; color: rgb(var(--text-muted)); margin-top: 2px; }
+
+    .card {
+      border-radius: 16px; border: 1px solid rgb(var(--border));
+      background: rgb(var(--bg-surface) / 0.6); overflow: hidden;
+    }
+
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border-bottom: 1px solid rgb(var(--border));
+    }
+
+    .card-title { font-size: 14px; font-weight: 700; }
+
+    .card-body { padding: 16px; }
+
+    .snapshot-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;
+    }
+
+    .snapshot-tile {
+      display: flex; align-items: center; gap: 14px;
+      border-radius: 14px; padding: 16px;
+      background: rgb(var(--bg-muted) / 0.35); border: 1px solid rgb(var(--border-muted));
+      transition: all 120ms ease;
+    }
+
+    .snapshot-tile:hover { background: rgb(var(--bg-muted) / 0.55); transform: translateY(-1px); }
+
+    .snapshot-icon { width: 38px; height: 38px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: rgb(var(--primary-500) / 0.12); color: rgb(var(--primary-500)); }
+
+    .snapshot-text { flex: 1; min-width: 0; }
+    .snapshot-label { font-size: 11px; color: rgb(var(--text-muted)); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+    .snapshot-value { font-size: 16px; font-weight: 700; margin-top: 2px; }
+    .snapshot-meta { font-size: 11px; color: rgb(var(--text-secondary)); margin-top: 2px; }
+
+    /* ── Hero Connection Card ── */
+    .hero-card {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      padding: 28px 24px 20px; margin-bottom: 18px;
+      border-radius: 20px;
+      background: linear-gradient(160deg, rgba(var(--bg-surface), 0.7), rgba(var(--bg-elevated), 0.6));
+      border: 1px solid rgb(var(--border));
+    }
+
+    .hero-icon-wrap {
+      position: relative; width: 72px; height: 72px; margin-bottom: 14px;
+    }
+
+    .hero-icon {
+      width: 72px; height: 72px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, rgb(var(--success)), #059669);
+      color: white;
+      box-shadow: 0 0 32px rgb(var(--success) / 0.35), 0 0 64px rgb(var(--success) / 0.15);
+      transition: all 300ms ease;
+    }
+
+    .hero-icon.off {
+      background: linear-gradient(135deg, rgb(var(--text-muted)), rgb(var(--text-secondary)));
+      box-shadow: 0 0 0px transparent;
+    }
+
+    .hero-status {
+      font-size: 22px; font-weight: 800; letter-spacing: -0.01em;
+      margin-bottom: 4px;
+    }
+
+    .hero-subtitle {
+      font-size: 13px; color: rgb(var(--text-muted)); margin-bottom: 16px;
+    }
+
+    .hero-toggle-row {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+    }
+
+    .hero-toggle-label {
+      font-size: 13px; font-weight: 600; color: rgb(var(--text-secondary));
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    .switch-lg {
+      appearance: none; width: 56px; height: 30px; border-radius: 999px;
+      background: rgb(var(--bg-muted)); border: 2px solid rgb(var(--border-muted));
+      position: relative; cursor: pointer; transition: all 200ms ease-out;
+    }
+
+    .switch-lg::after {
+      content: ""; position: absolute; top: 2px; left: 2px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: white; box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+      transition: transform 200ms ease-out;
+    }
+
+    .switch-lg:checked { background: rgb(var(--success)); border-color: rgb(var(--success)); }
+    .switch-lg:checked::after { transform: translateX(26px); }
+
+    .hero-stats {
+      display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;
+    }
+
+    .hero-stat {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+
+    .hero-stat-value {
+      font-size: 14px; font-weight: 700; color: rgb(var(--text-primary));
+      font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    }
+
+    .hero-stat-label {
+      font-size: 10px; color: rgb(var(--text-muted));
+      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+    }
+
+    .overview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .overview-grid > .card { min-width: 0; }
+
+    .rule-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px 14px; border-radius: 12px;
+      border: 1px solid transparent; background: transparent;
+      transition: all 120ms ease;
+    }
+
+    .rule-item:hover { background: rgb(var(--bg-muted) / 0.4); border-color: rgb(var(--border-muted)); }
+
+    .rule-payload { font-size: 13px; font-weight: 600; }
+    .rule-type { font-size: 11px; color: rgb(var(--text-muted)); margin-top: 2px; }
+    .rule-action { font-size: 12px; font-weight: 600; color: rgb(var(--primary-500)); }
+
+    .activity-item {
+      display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid rgb(var(--border));
+    }
+    .activity-item:last-child { border-bottom: 0; padding-bottom: 0; }
+    .activity-time { font-size: 11px; color: rgb(var(--text-muted)); width: 48px; flex-shrink: 0; }
+    .activity-text { font-size: 13px; color: rgb(var(--text-secondary)); }
+    .activity-text strong { color: rgb(var(--text-primary)); font-weight: 600; }
+
+    .nodes-toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px;
+    }
+
+    .filter-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+      background: rgb(var(--bg-muted) / 0.4); border: 1px solid rgb(var(--border-muted));
+      color: rgb(var(--text-secondary)); cursor: pointer; transition: all 120ms ease;
+    }
+
+    .chip:hover { background: rgb(var(--bg-elevated)); }
+    .chip.active { background: rgb(var(--primary-500) / 0.12); border-color: rgb(var(--primary-500) / 0.25); color: rgb(var(--primary-500)); }
+
+    .group-card { margin-bottom: 14px; }
+
+    .nodes-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(340px, 480px);
+      gap: 18px;
+      align-items: start;
+      width: 100%;
+    }
+
+    .node-detail-panel {
+      border-radius: 16px; border: 1px solid rgb(var(--border));
+      background: rgb(var(--bg-surface) / 0.6); overflow: hidden;
+      position: sticky; top: 18px;
+    }
+
+    .node-detail-header {
+      display: flex; align-items: center; gap: 14px;
+      padding: 18px; border-bottom: 1px solid rgb(var(--border));
+      background: rgb(var(--bg-muted) / 0.3);
+    }
+
+    .node-detail-flag {
+      width: 48px; height: 48px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgb(var(--bg-muted)); font-size: 22px; flex-shrink: 0;
+    }
+
+    .node-detail-title { font-size: 16px; font-weight: 700; }
+    .node-detail-subtitle { font-size: 12px; color: rgb(var(--text-muted)); margin-top: 2px; }
+
+    .node-detail-body { padding: 18px; }
+
+    .node-detail-section {
+      margin-bottom: 18px;
+    }
+
+    .node-detail-section:last-child { margin-bottom: 0; }
+
+    .node-detail-section-title {
+      font-size: 11px; color: rgb(var(--text-muted)); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; margin-bottom: 10px;
+    }
+
+    .node-detail-kv {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+
+    .node-detail-kv-item {
+      padding: 10px 12px; border-radius: 10px;
+      background: rgb(var(--bg-muted) / 0.3); border: 1px solid rgb(var(--border-muted));
+    }
+
+    .node-detail-kv-key { font-size: 11px; color: rgb(var(--text-muted)); margin-bottom: 2px; }
+    .node-detail-kv-value { font-size: 13px; font-weight: 600; color: rgb(var(--text-primary)); word-break: break-all; }
+
+    .latency-bar {
+      height: 6px; border-radius: 999px; background: rgb(var(--bg-muted));
+      overflow: hidden; margin-top: 8px;
+    }
+
+    .latency-bar-fill {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, rgb(var(--success)), rgb(var(--warning)));
+    }
+
+    .group-header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px 16px; cursor: pointer; user-select: none;
+    }
+
+    .group-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .group-name { font-size: 14px; font-weight: 700; }
+    .group-selected { font-size: 12px; color: rgb(var(--text-muted)); }
+
+    .group-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+    .node-list { border-top: 1px solid rgb(var(--border)); }
+
+    .node-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; cursor: pointer;
+      border-bottom: 1px solid rgb(var(--border));
+      transition: all 120ms ease;
+    }
+
+    .node-row:last-child { border-bottom: 0; }
+    .node-row:hover { background: rgb(var(--bg-muted) / 0.3); }
+    .node-row.selected { background: rgb(var(--primary-500) / 0.08); }
+
+    .node-radio {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2px solid rgb(var(--border-muted)); flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+
+    .node-row.selected .node-radio { border-color: rgb(var(--primary-500)); }
+    .node-row.selected .node-radio::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: rgb(var(--primary-500)); }
+
+    .node-flag {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgb(var(--bg-muted)); font-size: 14px; flex-shrink: 0;
+    }
+
+    .node-info { flex: 1; min-width: 0; }
+    .node-name { font-size: 14px; font-weight: 600; }
+    .node-meta { font-size: 11px; color: rgb(var(--text-muted)); margin-top: 2px; }
+
+    .node-latency {
+      font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px;
+      background: rgb(var(--success) / 0.12); color: rgb(var(--success)); flex-shrink: 0;
+    }
+
+    .node-latency.slow { background: rgb(var(--warning) / 0.12); color: rgb(var(--warning)); }
+    .node-latency.failed { background: rgb(var(--error) / 0.12); color: rgb(var(--error)); }
+
+    /* ── Logs Page: Full-screen Terminal ── */
+    #page-logs {
+      display: flex; flex-direction: column;
+      padding: 0; overflow: hidden;
+    }
+
+    .logs-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgb(var(--border));
+      flex-wrap: wrap;
+    }
+
+    .logs-stats {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+
+    .logs-stat {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 999px; font-size: 11px; font-weight: 700;
+      background: rgb(var(--bg-muted) / 0.4); border: 1px solid rgb(var(--border-muted));
+      color: rgb(var(--text-secondary)); text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    .logs-stat strong { color: rgb(var(--text-primary)); font-weight: 800; }
+    .logs-stat.live { background: rgb(var(--success) / 0.1); border-color: rgb(var(--success) / 0.2); color: rgb(var(--success)); }
+    .logs-stat.error { background: rgb(var(--error) / 0.1); border-color: rgb(var(--error) / 0.2); color: rgb(var(--error)); }
+    .logs-stat.warn { background: rgb(var(--warning) / 0.1); border-color: rgb(var(--warning) / 0.2); color: rgb(var(--warning)); }
+
+    .logs-stat.filterable {
+      cursor: pointer; user-select: none;
+      transition: all 150ms ease;
+    }
+
+    .logs-stat.filterable:hover {
+      transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    }
+
+    .logs-stat.filterable.active {
+      background: rgb(var(--primary-500) / 0.15); border-color: rgb(var(--primary-500) / 0.35);
+      color: rgb(var(--primary-500));
+      box-shadow: 0 0 0 2px rgb(var(--primary-500) / 0.15);
+    }
+
+    .logs-stat.filterable.active strong { color: rgb(var(--primary-500)); }
+
+    .logs-actions {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+
+    .log-stream {
+      flex: 1; min-height: 0;
+      border-radius: 0; border: 0;
+      background: rgb(9 15 26);
+      font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", "Fira Code", "Consolas", "Liberation Mono", monospace;
+      font-size: 12.5px; line-height: 1.65;
+      font-weight: 350;
+      letter-spacing: 0.01em;
+      font-variant-ligatures: contextual;
+      font-feature-settings: "calt" 1, "ss01" 1, "ss02" 1, "zero" 1;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow: auto;
+      padding: 10px 0;
+    }
+
+    .log-row {
+      display: flex; gap: 12px; padding: 5px 18px;
+      border-left: 3px solid transparent; transition: all 120ms ease;
+    }
+
+    .log-row:hover { background: rgb(20 30 48); transform: translateX(2px); }
+    .log-row.info { border-left-color: rgb(var(--info)); }
+    .log-row.success { border-left-color: rgb(var(--success)); }
+    .log-row.warn { border-left-color: rgb(var(--warning)); }
+    .log-row.error { border-left-color: rgb(var(--error)); }
+
+    .log-row.filtered-out { display: none !important; }
+
+    .log-time {
+      color: rgb(var(--text-muted)); opacity: 0.6;
+      width: 156px; flex-shrink: 0; user-select: none;
+    }
+
+    .log-level {
+      width: 52px; flex-shrink: 0; font-weight: 600;
+      letter-spacing: 0.04em; user-select: none;
+    }
+
+    .log-level.info { color: rgb(var(--info)); }
+    .log-level.success { color: rgb(var(--success)); }
+    .log-level.warn { color: rgb(var(--warning)); }
+    .log-level.error { color: rgb(var(--error)); }
+
+    .log-msg {
+      color: rgb(var(--text-secondary));
+      word-break: break-all; white-space: pre-wrap; flex: 1;
+    }
+
+    .log-row.error .log-msg { color: rgb(var(--error)); opacity: 0.92; }
+
+    .btn-toggle {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+      background: rgb(var(--bg-elevated)); border: 1px solid rgb(var(--border-muted));
+      color: rgb(var(--text-secondary)); transition: all 120ms ease;
+    }
+
+    .btn-toggle.active {
+      background: rgb(var(--primary-500) / 0.12); border-color: rgb(var(--primary-500) / 0.25);
+      color: rgb(var(--primary-500));
+    }
+
+    .btn-toggle.active .toggle-dot { background: rgb(var(--primary-500)); }
+
+    .toggle-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--text-muted));
+      transition: all 120ms ease;
+    }
+
+    .settings-tabs {
+      display: flex; gap: 8px; margin-bottom: 18px;
+      padding: 4px; border-radius: 12px;
+      background: rgb(var(--bg-muted) / 0.4); border: 1px solid rgb(var(--border-muted));
+      width: fit-content;
+    }
+
+    /* ── Settings Preference Summary Cards ── */
+    .pref-summary-row {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;
+    }
+
+    .pref-card {
+      border-radius: 14px; padding: 16px;
+      background: rgb(var(--bg-muted) / 0.35); border: 1px solid rgb(var(--border-muted));
+      display: flex; flex-direction: column; gap: 6px;
+      transition: all 120ms ease;
+    }
+
+    .pref-card:hover { background: rgb(var(--bg-muted) / 0.55); transform: translateY(-1px); }
+
+    .pref-card-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgb(var(--primary-500) / 0.12); color: rgb(var(--primary-500));
+    }
+
+    .pref-card-value {
+      font-size: 15px; font-weight: 700; color: rgb(var(--text-primary));
+      font-family: "Cascadia Code", "SF Mono", "JetBrains Mono", monospace;
+    }
+
+    .pref-card-label {
+      font-size: 11px; color: rgb(var(--text-muted));
+      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+    }
+
+    .pref-card-meta {
+      font-size: 11px; color: rgb(var(--text-secondary));
+    }
+
+    @media (max-width: 1100px) {
+      .pref-summary-row { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .settings-tab {
+      padding: 8px 16px; border-radius: 10px; border: 0; background: transparent;
+      color: rgb(var(--text-secondary)); font-size: 13px; font-weight: 600;
+      transition: all 120ms ease;
+    }
+
+    .settings-tab:hover { color: rgb(var(--text-primary)); }
+    .settings-tab.active { background: rgb(var(--primary-500) / 0.12); color: rgb(var(--primary-500)); }
+
+    .switch-row {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+      padding: 14px 0; border-bottom: 1px solid rgb(var(--border));
+    }
+
+    .switch-row:last-child { border-bottom: 0; padding-bottom: 0; }
+
+    .switch-label { font-size: 14px; font-weight: 600; }
+    .switch-desc { font-size: 12px; color: rgb(var(--text-muted)); margin-top: 2px; }
+
+    .input-row { margin-bottom: 14px; }
+    .input-label { display: block; font-size: 12px; font-weight: 700; color: rgb(var(--text-muted)); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .input-field {
+      width: 100%; padding: 10px 12px; border-radius: 10px;
+      background: rgb(var(--bg-muted) / 0.5); border: 1px solid rgb(var(--border-muted));
+      color: rgb(var(--text-primary)); font-size: 13px; outline: 0;
+    }
+    .input-field:focus { border-color: rgb(var(--primary-500)); box-shadow: 0 0 0 3px rgb(var(--primary-500) / 0.12); }
+
+    .about-brand {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      padding: 32px;
+    }
+
+    .brand-logo {
+      width: 64px; height: 64px; border-radius: 18px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, rgb(var(--primary-500)), rgb(var(--primary-700)));
+      color: white; font-size: 28px; font-weight: 800; margin-bottom: 16px;
+      box-shadow: 0 12px 32px rgb(var(--primary-600) / 0.25);
+    }
+
+    .brand-title { font-size: 22px; font-weight: 800; }
+    .brand-version {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 8px; padding: 4px 12px; border-radius: 999px;
+      background: rgb(var(--bg-muted)); border: 1px solid rgb(var(--border-muted));
+      font-size: 12px; font-weight: 700; color: rgb(var(--text-secondary));
+    }
+
+    .kv-list { display: flex; flex-direction: column; gap: 10px; }
+    .kv-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 14px; border-radius: 10px;
+      background: rgb(var(--bg-muted) / 0.3); border: 1px solid rgb(var(--border-muted));
+    }
+    .kv-key { font-size: 12px; color: rgb(var(--text-muted)); }
+    .kv-value { font-size: 12px; font-weight: 600; color: rgb(var(--text-primary)); font-family: monospace; }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 1350px) {
+      .overview-grid { grid-template-columns: repeat(2, 1fr); }
+      .nodes-layout { grid-template-columns: 1fr; }
+      .node-detail-panel { position: static; }
+    }
+
+    @media (max-width: 1100px) {
+      .snapshot-grid { grid-template-columns: repeat(2, 1fr); }
+      .overview-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      .sidebar { display: none; }
+      .shell { flex-direction: column; }
+      .snapshot-grid { grid-template-columns: 1fr; }
+      .bottom-nav {
+        display: flex !important; position: fixed; bottom: 0; left: 0; right: 0;
+        height: 64px; background: rgb(var(--bg-surface)); border-top: 1px solid rgb(var(--border));
+        justify-content: space-around; align-items: center; z-index: 50;
+      }
+      .app { padding-bottom: 74px; }
+    }
+
+    .bottom-nav { display: none; }
+
+    .bottom-nav-item {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      background: transparent; border: 0; color: rgb(var(--text-muted)); font-size: 10px; font-weight: 600;
+    }
+
+    .bottom-nav-item.active { color: rgb(var(--primary-500)); }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="titlebar">
+      <div class="titlebar-left">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+        SingBox Client
+        <span style="font-size:11px;color:rgb(var(--text-muted));font-weight:500;">Prototype</span>
+      </div>
+      <div class="titlebar-right">
+        <button class="icon-btn" id="themeBtn" title="Toggle theme">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path></svg>
+        </button>
+        <button class="icon-btn" title="Minimize">—</button>
+        <button class="icon-btn" title="Close">✕</button>
+      </div>
+    </div>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <div class="section-label">Session</div>
+          <div class="session-card">
+            <div class="session-row">
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                <div class="status-dot live"></div>
+                <span style="font-size:13px;font-weight:600;">Connected</span>
+              </div>
+              <span class="status-pill"><span class="status-dot live"></span>Live</span>
+            </div>
+            <p style="font-size:11px;color:rgb(var(--text-muted));margin-top:6px;">Traffic routing active</p>
+            <div class="session-metrics">
+              <div class="metric-chip"><strong>Engine</strong> Running</div>
+              <div class="metric-chip"><strong>Tray</strong> Enabled</div>
+            </div>
+          </div>
+        </div>
+
+        <nav class="sidebar-section" style="flex:1;min-height:0;display:flex;flex-direction:column;">
+          <div class="section-label">Workspace</div>
+          <div class="nav-list">
+            <button class="nav-item active" data-page="overview">
+              <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg></span>
+              Overview
+            </button>
+            <button class="nav-item" data-page="nodes">
+              <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"></rect><line x1="2" x2="22" y1="10" y2="10"></line></svg></span>
+              Nodes
+            </button>
+            <button class="nav-item" data-page="logs">
+              <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><line x1="10" x2="8" y1="9" y2="9"></line></svg></span>
+              Logs
+            </button>
+            <button class="nav-item" data-page="settings">
+              <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></span>
+              Settings
+            </button>
+            <button class="nav-item" data-page="about">
+              <span class="nav-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg></span>
+              About
+            </button>
+          </div>
+        </nav>
+
+        <div class="sidebar-section">
+          <button class="import-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
+            Import Profile
+          </button>
+          <div style="margin-top:10px;">
+            <div class="section-label" style="display:flex;align-items:center;justify-content:space-between;">
+              <span>Saved Profiles</span>
+              <span style="font-size:10px;color:rgb(var(--text-muted));font-weight:600;">4</span>
+            </div>
+            <div class="profile-selector" id="profileSelector">
+              <button class="profile-trigger" id="profileTrigger" aria-haspopup="listbox" aria-expanded="false">
+                <div class="profile-trigger-left">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                  <span class="profile-trigger-name">client.json</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                  <span class="profile-trigger-meta">local</span>
+                  <svg class="profile-trigger-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                </div>
+              </button>
+
+              <div class="profile-dropdown" id="profileDropdown" role="listbox">
+                <div class="profile-dropdown-inner">
+                  <div class="profile-dropdown-header">
+                    <span>Available Profiles</span>
+                    <span style="font-size:10px;font-weight:600;">Switch profile</span>
+                  </div>
+
+                  <div class="profile-option active" data-profile="main" data-type="local" role="option" aria-selected="true">
+                    <div class="profile-option-left">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      <span class="profile-option-name">client.json</span>
+                    </div>
+                    <div style="display:flex;align-items:center;flex-shrink:0;">
+                      <span class="profile-trigger-meta" style="margin-right:6px;">local</span>
+                      <div class="profile-option-actions">
+                        <button class="profile-option-action-btn" data-tooltip="Edit rules" data-action="edit" onclick="editProfileRules('main')">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                        </button>
+                        <button class="profile-option-action-btn export" data-tooltip="Export" data-action="export" onclick="event.stopPropagation()">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="profile-option" data-profile="sub1" data-type="url" role="option" aria-selected="false">
+                    <div class="profile-option-left">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      <span class="profile-option-name">sub-ny</span>
+                    </div>
+                    <div style="display:flex;align-items:center;flex-shrink:0;">
+                      <span class="profile-trigger-meta url" style="margin-right:6px;">URL</span>
+                      <div class="profile-option-actions">
+                        <button class="profile-option-action-btn" data-tooltip="Edit rules" data-action="edit" onclick="editProfileRules('sub1')">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                        </button>
+                        <button class="profile-option-action-btn export" data-tooltip="Export" data-action="export" onclick="event.stopPropagation()">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="profile-option" data-profile="sub2" data-type="url" role="option" aria-selected="false">
+                    <div class="profile-option-left">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      <span class="profile-option-name">sub-eu</span>
+                    </div>
+                    <div style="display:flex;align-items:center;flex-shrink:0;">
+                      <span class="profile-trigger-meta url" style="margin-right:6px;">URL</span>
+                      <div class="profile-option-actions">
+                        <button class="profile-option-action-btn" data-tooltip="Edit rules" data-action="edit" onclick="editProfileRules('sub2')">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                        </button>
+                        <button class="profile-option-action-btn export" data-tooltip="Export" data-action="export" onclick="event.stopPropagation()">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="profile-option" data-profile="backup" data-type="local" role="option" aria-selected="false">
+                    <div class="profile-option-left">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      <span class="profile-option-name">backup-direct</span>
+                    </div>
+                    <div style="display:flex;align-items:center;flex-shrink:0;">
+                      <span class="profile-trigger-meta" style="margin-right:6px;">local</span>
+                      <div class="profile-option-actions">
+                        <button class="profile-option-action-btn" data-tooltip="Edit rules" data-action="edit" onclick="editProfileRules('backup')">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                        </button>
+                        <button class="profile-option-action-btn export" data-tooltip="Export" data-action="export" onclick="event.stopPropagation()">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+
+        <!-- Overview Page -->
+        <section class="page" id="page-overview">
+          <div class="hero-card" id="heroCard">
+            <div class="hero-icon-wrap">
+              <div class="hero-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              </div>
+            </div>
+            <div class="hero-status">Protected</div>
+            <div class="hero-subtitle">Traffic is securely routed through sing-box</div>
+            <div class="hero-toggle-row">
+              <input type="checkbox" class="switch-lg" id="heroSwitch" checked />
+              <span class="hero-toggle-label">Connected</span>
+            </div>
+            <div class="hero-stats">
+              <div class="hero-stat"><span class="hero-stat-value">Mixed</span><span class="hero-stat-label">Inbound</span></div>
+              <div class="hero-stat"><span class="hero-stat-value">auto</span><span class="hero-stat-label">Route</span></div>
+              <div class="hero-stat"><span class="hero-stat-value">2h 14m</span><span class="hero-stat-label">Uptime</span></div>
+              <div class="hero-stat"><span class="hero-stat-value">14.2 GB</span><span class="hero-stat-label">Transfer</span></div>
+            </div>
+          </div>
+          <div class="snapshot-grid">
+            <div class="snapshot-tile">
+              <div class="snapshot-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg></div>
+              <div class="snapshot-text">
+                <div class="snapshot-label">Routing Targets</div>
+                <div class="snapshot-value">3 nodes</div>
+                <div class="snapshot-meta">2 groups ready</div>
+              </div>
+            </div>
+            <div class="snapshot-tile">
+              <div class="snapshot-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"></rect><line x1="2" x2="22" y1="10" y2="10"></line></svg></div>
+              <div class="snapshot-text">
+                <div class="snapshot-label">Inbounds</div>
+                <div class="snapshot-value">Mixed</div>
+                <div class="snapshot-meta">127.0.0.1:11451</div>
+              </div>
+            </div>
+            <div class="snapshot-tile">
+              <div class="snapshot-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
+              <div class="snapshot-text">
+                <div class="snapshot-label">DNS</div>
+                <div class="snapshot-value">Local</div>
+                <div class="snapshot-meta">114.114.114.114</div>
+              </div>
+            </div>
+            <div class="snapshot-tile">
+              <div class="snapshot-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
+              <div class="snapshot-text">
+                <div class="snapshot-label">Node Groups</div>
+                <div class="snapshot-value">2 groups</div>
+                <div class="snapshot-meta">auto · proxy</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="overview-grid">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Active Rules</div>
+                <span class="status-pill info" style="font-size:10px;">12 rules</span>
+              </div>
+              <div class="card-body">
+                <div class="rule-item"><div><div class="rule-payload">geosite:cn</div><div class="rule-type">Domain set</div></div><div class="rule-action">DIRECT</div></div>
+                <div class="rule-item"><div><div class="rule-payload">geosite:geolocation-!cn</div><div class="rule-type">Domain set</div></div><div class="rule-action">proxy</div></div>
+                <div class="rule-item"><div><div class="rule-payload">0.0.0.0/0</div><div class="rule-type">IP CIDR</div></div><div class="rule-action">Final proxy</div></div>
+                <div class="rule-item"><div><div class="rule-payload">*.lan</div><div class="rule-type">Domain suffix</div></div><div class="rule-action">DIRECT</div></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Recent Activity</div>
+                <button class="btn btn-secondary" style="padding:6px 10px;font-size:11px;">View all</button>
+              </div>
+              <div class="card-body">
+                <div class="activity-item"><span class="activity-time">14:12</span><span class="activity-text"><strong>Connected</strong> to vless-ws (313ms)</span></div>
+                <div class="activity-item"><span class="activity-time">14:08</span><span class="activity-text">Switched outbound group to <strong>auto</strong></span></div>
+                <div class="activity-item"><span class="activity-time">14:05</span><span class="activity-text">Imported profile <strong>client.json</strong></span></div>
+                <div class="activity-item"><span class="activity-time">13:57</span><span class="activity-text"><strong>URL profile</strong> refreshed successfully</span></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Network Stats</div>
+                <span class="status-pill success" style="font-size:10px;">Live</span>
+              </div>
+              <div class="card-body">
+                <div class="activity-item"><span class="activity-time">↓ IN</span><span class="activity-text"><strong>842 MB</strong> / 5.2 GB today</span></div>
+                <div class="activity-item"><span class="activity-time">↑ OUT</span><span class="activity-text"><strong>1.1 GB</strong> / 9.0 GB today</span></div>
+                <div class="activity-item"><span class="activity-time">CONN</span><span class="activity-text"><strong>24</strong> active connections</span></div>
+                <div class="activity-item"><span class="activity-time">CPU</span><span class="activity-text"><strong>2.4%</strong> engine load</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Nodes Page -->
+        <section class="page hidden" id="page-nodes">
+          <div class="nodes-toolbar">
+            <div>
+              <div class="page-title">Outbound Selection</div>
+              <div class="page-subtitle">1 group · 3 nodes · Selected: auto</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg> Auto</button>
+              <button class="btn btn-secondary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> Test</button>
+              <button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg> Add Node</button>
+            </div>
+          </div>
+
+          <div class="nodes-layout">
+            <div class="card group-card">
+              <div class="group-header">
+                <div class="group-left">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:rgb(var(--text-muted));"><path d="m6 9 6 6 6-6"></path></svg>
+                  <span class="group-name">auto</span>
+                  <span class="group-selected">· vless-ws</span>
+                </div>
+                <div class="group-right">
+                  <span class="status-pill" style="font-size:10px;">3 members</span>
+                  <span class="metric-chip"><strong>best</strong> 313ms</span>
+                </div>
+              </div>
+              <div class="node-list">
+                <div class="node-row selected" data-node="vless-ws">
+                  <div class="node-radio"></div>
+                  <div class="node-flag">🇺🇸</div>
+                  <div class="node-info"><div class="node-name">vless-ws</div><div class="node-meta">VLESS · ws+tls</div></div>
+                  <div class="node-latency">313ms</div>
+                </div>
+                <div class="node-row" data-node="vless-reality">
+                  <div class="node-radio"></div>
+                  <div class="node-flag">🇯🇵</div>
+                  <div class="node-info"><div class="node-name">vless-reality</div><div class="node-meta">VLESS · reality</div></div>
+                  <div class="node-latency failed">Failed</div>
+                </div>
+                <div class="node-row" data-node="hy2">
+                  <div class="node-radio"></div>
+                  <div class="node-flag">🇸🇬</div>
+                  <div class="node-info"><div class="node-name">hy2</div><div class="node-meta">Hysteria2</div></div>
+                  <div class="node-latency slow">552ms</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="node-detail-panel" id="nodeDetailPanel">
+              <div class="node-detail-header">
+                <div class="node-detail-flag" id="detailFlag">🇺🇸</div>
+                <div>
+                  <div class="node-detail-title" id="detailName">vless-ws</div>
+                  <div class="node-detail-subtitle" id="detailMeta">VLESS · ws+tls · United States</div>
+                </div>
+              </div>
+              <div class="node-detail-body">
+                <div class="node-detail-section">
+                  <div class="node-detail-section-title">Latency</div>
+                  <div style="display:flex;align-items:baseline;gap:8px;">
+                    <span style="font-size:24px;font-weight:800;color:rgb(var(--success));" id="detailLatency">313ms</span>
+                    <span style="font-size:12px;color:rgb(var(--text-muted));">best in group</span>
+                  </div>
+                  <div class="latency-bar"><div class="latency-bar-fill" id="detailLatencyBar" style="width:32%;"></div></div>
+                </div>
+                <div class="node-detail-section">
+                  <div class="node-detail-section-title">Connection</div>
+                  <div class="node-detail-kv">
+                    <div class="node-detail-kv-item">
+                      <div class="node-detail-kv-key">Protocol</div>
+                      <div class="node-detail-kv-value" id="detailProtocol">VLESS</div>
+                    </div>
+                    <div class="node-detail-kv-item">
+                      <div class="node-detail-kv-key">Transport</div>
+                      <div class="node-detail-kv-value" id="detailTransport">ws+tls</div>
+                    </div>
+                    <div class="node-detail-kv-item">
+                      <div class="node-detail-kv-key">Server</div>
+                      <div class="node-detail-kv-value" id="detailServer">us.example.com</div>
+                    </div>
+                    <div class="node-detail-kv-item">
+                      <div class="node-detail-kv-key">Port</div>
+                      <div class="node-detail-kv-value" id="detailPort">443</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="node-detail-section">
+                  <div class="node-detail-section-title">Status</div>
+                  <span class="status-pill" id="detailStatus"><span class="status-dot live"></span>Active</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Logs Page -->
+        <section class="page hidden" id="page-logs">
+          <div class="logs-toolbar">
+            <div class="logs-stats">
+              <span class="logs-stat filterable" id="statAll"><strong>ENTRIES</strong> 500</span>
+              <span class="logs-stat live"><span class="status-dot live" style="width:6px;height:6px;"></span>STREAM Live</span>
+              <span class="logs-stat error filterable" id="statError"><strong>ERRORS</strong> 11</span>
+              <span class="logs-stat warn filterable" id="statWarn"><strong>WARNINGS</strong> 0</span>
+            </div>
+            <div class="logs-actions">
+              <button class="btn btn-secondary" id="pauseLogs">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="4" height="16" x="6" y="4"></rect><rect width="4" height="16" x="14" y="4"></rect></svg> Pause
+              </button>
+              <button class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg> Copy
+              </button>
+              <button class="btn-toggle active" id="autoScrollBtn">
+                <span class="toggle-dot"></span> Auto-scroll
+              </button>
+              <button class="btn btn-secondary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg> Clear
+              </button>
+            </div>
+          </div>
+          <div class="log-stream" id="logStream">
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:12</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m outbound/direct[direct]: outbound connection to galileotelemetry.tencent.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:12</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:60558</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:12</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection to copilot.tencent.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:12</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m router: found process path: C:\_dCode\WorkBuddy\WorkBuddy.exe</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:12</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m outbound/direct[direct]: outbound connection to copilot.tencent.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:50452</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection to copilot.tencent.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m router: found process path: C:\_dCode\WorkBuddy\WorkBuddy.exe</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m outbound/direct[direct]: outbound connection to copilot.tencent.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:62694</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection to tracking.miui.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m router: found process path: C:\Program Files\Google\Chrome\Application\chrome.exe</span></div>
+            <div class="log-row success"><span class="log-time">+0800 2026-07-02 14:34:14</span><span class="log-level success">OK</span><span class="log-msg">[32mOK[0m outbound/hysteria2[hy2]: outbound connection to tracking.miui.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:18</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:53212</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:18</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m inbound/mixed[mixed-in]: inbound connection to copilot.tencent.com:443</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:18</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m router: found process path: C:\_dCode\WorkBuddy\WorkBuddy.exe</span></div>
+            <div class="log-row info"><span class="log-time">+0800 2026-07-02 14:34:18</span><span class="log-level info">INFO</span><span class="log-msg">[36mINFO[0m outbound/direct[direct]: outbound connection to copilot.tencent.com:443</span></div>
+            <div class="log-row warn"><span class="log-time">+0800 2026-07-02 14:34:22</span><span class="log-level warn">WARN</span><span class="log-msg">[33mWARN[0m outbound/vless[vless-reality]: handshake took 1.8s</span></div>
+            <div class="log-row error"><span class="log-time">+0800 2026-07-02 14:34:23</span><span class="log-level error">ERROR</span><span class="log-msg">[31mERROR[0m dns: exchange failed for api.github.com: context deadline exceeded</span></div>
+            <div class="log-row success"><span class="log-time">+0800 2026-07-02 14:34:25</span><span class="log-level success">OK</span><span class="log-msg">[32mOK[0m latency test finished: vless-ws 313ms</span></div>
+          </div>
+        </section>
+
+        <!-- Settings Page -->
+        <section class="page hidden" id="page-settings">
+          <div class="page-header">
+            <div>
+              <div class="page-title">Runtime Preferences</div>
+              <div class="page-subtitle">Configure local proxy behavior and advanced options</div>
+            </div>
+          </div>
+
+          <div class="pref-summary-row">
+            <div class="pref-card">
+              <div class="pref-card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg></div>
+              <div class="pref-card-value">OFF</div>
+              <div class="pref-card-label">Autostart</div>
+              <div class="pref-card-meta">Manual launch</div>
+            </div>
+            <div class="pref-card">
+              <div class="pref-card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"></rect><line x1="2" x2="22" y1="10" y2="10"></line></svg></div>
+              <div class="pref-card-value">127.0.0.1:11451</div>
+              <div class="pref-card-label">Inbound</div>
+              <div class="pref-card-meta">Mixed · System proxy ON</div>
+            </div>
+            <div class="pref-card">
+              <div class="pref-card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"></path><path d="m6 16 6-12 6 12"></path></svg></div>
+              <div class="pref-card-value">Disabled</div>
+              <div class="pref-card-label">TUN</div>
+              <div class="pref-card-meta">Not routing system traffic</div>
+            </div>
+            <div class="pref-card">
+              <div class="pref-card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
+              <div class="pref-card-value">114.114.114.114</div>
+              <div class="pref-card-label">DNS</div>
+              <div class="pref-card-meta">FakeIP enabled · Remote DoH</div>
+            </div>
+          </div>
+
+          <div class="settings-tabs">
+            <button class="settings-tab active" data-tab="inbound">Inbound</button>
+            <button class="settings-tab" data-tab="rules">Rule Sets</button>
+            <button class="settings-tab" data-tab="tun">TUN</button>
+            <button class="settings-tab" data-tab="dns">DNS</button>
+          </div>
+
+          <div class="two-col" id="settings-inbound">
+            <div class="card">
+              <div class="card-header"><div class="card-title">Mixed Inbound</div></div>
+              <div class="card-body">
+                <div class="switch-row">
+                  <div><div class="switch-label">Enable mixed inbound</div><div class="switch-desc">HTTP + SOCKS5 proxy on a single port</div></div>
+                  <input type="checkbox" class="switch" checked />
+                </div>
+                <div class="switch-row">
+                  <div><div class="switch-label">System proxy</div><div class="switch-desc">Automatically set Windows system proxy</div></div>
+                  <input type="checkbox" class="switch" checked />
+                </div>
+                <div class="input-row" style="margin-top:12px;">
+                  <label class="input-label">Listen address</label>
+                  <input class="input-field" value="127.0.0.1" />
+                </div>
+                <div class="input-row">
+                  <label class="input-label">Port</label>
+                  <input class="input-field" value="11451" />
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div class="card-title">Startup</div></div>
+              <div class="card-body">
+                <div class="switch-row">
+                  <div><div class="switch-label">Auto-connect on launch</div><div class="switch-desc">Start sing-box when the app opens</div></div>
+                  <input type="checkbox" class="switch" />
+                </div>
+                <div class="switch-row">
+                  <div><div class="switch-label">Start minimized</div><div class="switch-desc">Hide to tray on startup</div></div>
+                  <input type="checkbox" class="switch" checked />
+                </div>
+                <div class="switch-row">
+                  <div><div class="switch-label">Show startup tips</div><div class="switch-desc">Display quick-start guide once a week</div></div>
+                  <input type="checkbox" class="switch" checked />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-col hidden" id="settings-rules">
+            <div class="card">
+              <div class="card-header"><div class="card-title">Rule Sets</div></div>
+              <div class="card-body">
+                <div class="switch-row">
+                  <div><div class="switch-label">Auto-update rule sets</div><div class="switch-desc">Refresh geosite and geoip weekly</div></div>
+                  <input type="checkbox" class="switch" checked />
+                </div>
+                <div class="input-row" style="margin-top:12px;">
+                  <label class="input-label">Geosite URL</label>
+                  <input class="input-field" value="https://github.com/SagerNet/sing-geosite/rule-set/" />
+                </div>
+                <div class="input-row">
+                  <label class="input-label">GeoIP URL</label>
+                  <input class="input-field" value="https://github.com/SagerNet/sing-geoip/rule-set/" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-col hidden" id="settings-tun">
+            <div class="card">
+              <div class="card-header"><div class="card-title">TUN Interface</div></div>
+              <div class="card-body">
+                <div class="switch-row">
+                  <div><div class="switch-label">Enable TUN</div><div class="switch-desc">Route all device traffic through sing-box</div></div>
+                  <input type="checkbox" class="switch" />
+                </div>
+                <div class="input-row" style="margin-top:12px;">
+                  <label class="input-label">Interface name</label>
+                  <input class="input-field" value="sing-box" />
+                </div>
+                <div class="input-row">
+                  <label class="input-label">MTU</label>
+                  <input class="input-field" value="9000" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="two-col hidden" id="settings-dns">
+            <div class="card">
+              <div class="card-header"><div class="card-title">DNS Servers</div></div>
+              <div class="card-body">
+                <div class="switch-row">
+                  <div><div class="switch-label">FakeIP</div><div class="switch-desc">Use FakeIP for outbound domains</div></div>
+                  <input type="checkbox" class="switch" checked />
+                </div>
+                <div class="input-row" style="margin-top:12px;">
+                  <label class="input-label">Default DNS</label>
+                  <input class="input-field" value="114.114.114.114" />
+                </div>
+                <div class="input-row">
+                  <label class="input-label">Remote DNS</label>
+                  <input class="input-field" value="https://1.1.1.1/dns-query" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- About Page -->
+        <section class="page hidden" id="page-about">
+          <div class="two-col" style="align-items:start;">
+            <div class="card">
+              <div class="about-brand">
+                <div class="brand-logo">S</div>
+                <div class="brand-title">SingBox Client</div>
+                <div class="brand-version">v1.1.0 · sing-box core 1.10.0</div>
+                <p style="margin-top:14px;font-size:13px;color:rgb(var(--text-secondary));max-width:320px;">
+                  A desktop GUI for sing-box built with Tauri and React. Designed for clarity, speed, and control.
+                </p>
+                <div style="display:flex;gap:10px;margin-top:18px;">
+                  <button class="btn btn-primary">Check Update</button>
+                  <button class="btn btn-secondary">Open Logs</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><div class="card-title">Diagnostics</div></div>
+              <div class="card-body">
+                <div class="kv-list">
+                  <div class="kv-item"><span class="kv-key">Config directory</span><span class="kv-value">C:\Users\Yekon\.config\sing-box</span></div>
+                  <div class="kv-item"><span class="kv-key">Working directory</span><span class="kv-value">C:\_dCode\SingBox</span></div>
+                  <div class="kv-item"><span class="kv-key">Core binary</span><span class="kv-value">bin\sing-box.exe</span></div>
+                  <div class="kv-item"><span class="kv-key">Log level</span><span class="kv-value">info</span></div>
+                  <div class="kv-item"><span class="kv-key">Tauri version</span><span class="kv-value">2.0.0</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <nav class="bottom-nav">
+      <button class="bottom-nav-item active" data-page="overview">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"></rect><rect width="7" height="5" x="14" y="3" rx="1"></rect><rect width="7" height="9" x="14" y="12" rx="1"></rect><rect width="7" height="5" x="3" y="16" rx="1"></rect></svg>
+        Overview
+      </button>
+      <button class="bottom-nav-item" data-page="nodes">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"></rect><line x1="2" x2="22" y1="10" y2="10"></line></svg>
+        Nodes
+      </button>
+      <button class="bottom-nav-item" data-page="logs">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><line x1="10" x2="8" y1="9" y2="9"></line></svg>
+        Logs
+      </button>
+      <button class="bottom-nav-item" data-page="settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        Settings
+      </button>
+      <button class="bottom-nav-item" data-page="about">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+        About
+      </button>
+    </nav>
+  </div>
+
+  <script>
+    const pages = ['overview', 'nodes', 'logs', 'settings', 'about'];
+
+    function showPage(page) {
+      pages.forEach(p => {
+        document.getElementById('page-' + p).classList.toggle('hidden', p !== page);
+      });
+      document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.page === page);
+      });
+    }
+
+    document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(el => {
+      el.addEventListener('click', () => showPage(el.dataset.page));
+    });
+
+    const nodeData = {
+      'vless-ws': {
+        flag: '🇺🇸', name: 'vless-ws', meta: 'VLESS · ws+tls · United States',
+        latency: '313ms', latencyPct: '32%', latencyColor: '--success',
+        protocol: 'VLESS', transport: 'ws+tls', server: 'us.example.com', port: '443',
+        status: 'Active', statusType: 'live'
+      },
+      'vless-reality': {
+        flag: '🇯🇵', name: 'vless-reality', meta: 'VLESS · reality · Japan',
+        latency: 'Failed', latencyPct: '0%', latencyColor: '--error',
+        protocol: 'VLESS', transport: 'reality', server: 'jp.example.com', port: '443',
+        status: 'Unavailable', statusType: 'error'
+      },
+      'hy2': {
+        flag: '🇸🇬', name: 'hy2', meta: 'Hysteria2 · Singapore',
+        latency: '552ms', latencyPct: '55%', latencyColor: '--warning',
+        protocol: 'Hysteria2', transport: 'udp', server: 'sg.example.com', port: '443',
+        status: 'Active', statusType: 'live'
+      }
+    };
+
+    function updateNodeDetail(nodeId) {
+      const data = nodeData[nodeId];
+      if (!data) return;
+      document.getElementById('detailFlag').textContent = data.flag;
+      document.getElementById('detailName').textContent = data.name;
+      document.getElementById('detailMeta').textContent = data.meta;
+      document.getElementById('detailLatency').textContent = data.latency;
+      document.getElementById('detailLatency').style.color = data.latency === 'Failed' ? 'rgb(var(--error))' : 'rgb(var(' + data.latencyColor + '))';
+      document.getElementById('detailLatencyBar').style.width = data.latencyPct;
+      document.getElementById('detailLatencyBar').style.background = data.latency === 'Failed'
+        ? 'rgb(var(--error))'
+        : 'linear-gradient(90deg, rgb(var(--success)), rgb(var(--warning)))';
+      document.getElementById('detailProtocol').textContent = data.protocol;
+      document.getElementById('detailTransport').textContent = data.transport;
+      document.getElementById('detailServer').textContent = data.server;
+      document.getElementById('detailPort').textContent = data.port;
+      const statusDotClass = data.statusType === 'live' ? 'live' : 'error';
+      document.getElementById('detailStatus').innerHTML = '<span class="status-dot ' + statusDotClass + '"></span>' + data.status;
+      document.getElementById('detailStatus').className = 'status-pill ' + (data.statusType === 'error' ? 'error' : '');
+    }
+
+    document.querySelectorAll('.node-row').forEach(row => {
+      row.addEventListener('click', () => {
+        document.querySelectorAll('.node-row').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+        updateNodeDetail(row.dataset.node);
+      });
+    });
+
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        ['inbound', 'rules', 'tun', 'dns'].forEach(id => {
+          document.getElementById('settings-' + id).classList.toggle('hidden', id !== tab.dataset.tab);
+        });
+      });
+    });
+
+    document.getElementById('themeBtn').addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme');
+      document.documentElement.setAttribute('data-theme', current === 'light' ? 'dark' : 'light');
+    });
+
+    const sessionSwitch = document.getElementById('sessionSwitch');
+    const heroSwitch = document.getElementById('heroSwitch');
+    const heroIcon = document.querySelector('.hero-icon');
+    const heroStatus = document.querySelector('.hero-status');
+    const heroSubtitle = document.querySelector('.hero-subtitle');
+    const heroToggleLabel = document.querySelector('.hero-toggle-label');
+    const sessionName = document.querySelector('.session-row div span');
+    const sessionPill = document.querySelector('.session-row .status-pill');
+    const sessionHelper = document.querySelector('.session-card > p');
+    const sessionDot = document.querySelector('.session-row .status-dot');
+    let connected = true;
+
+    function updateConnectionUI(connected) {
+      if (connected) {
+        sessionName.textContent = 'Connected';
+        sessionPill.innerHTML = '<span class="status-dot live"></span>Live';
+        sessionPill.className = 'status-pill';
+        sessionHelper.textContent = 'Traffic routing active';
+        if (sessionDot) { sessionDot.className = 'status-dot live'; }
+        heroIcon.classList.remove('off');
+        heroStatus.textContent = 'Protected';
+        heroSubtitle.textContent = 'Traffic is securely routed through sing-box';
+        heroToggleLabel.textContent = 'Connected';
+      } else {
+        sessionName.textContent = 'Disconnected';
+        sessionPill.innerHTML = '<span class="status-dot error"></span>Idle';
+        sessionPill.className = 'status-pill error';
+        sessionHelper.textContent = 'Waiting for runtime start';
+        if (sessionDot) { sessionDot.className = 'status-dot error'; }
+        heroIcon.classList.add('off');
+        heroStatus.textContent = 'Offline';
+        heroSubtitle.textContent = 'Toggle to connect and start routing';
+        heroToggleLabel.textContent = 'Disconnected';
+      }
+    }
+
+    // Session card click → toggle connection
+    document.querySelector('.session-card').addEventListener('click', () => {
+      connected = !connected;
+      heroSwitch.checked = connected;
+      updateConnectionUI(connected);
+    });
+
+    heroSwitch.addEventListener('change', () => {
+      connected = heroSwitch.checked;
+      updateConnectionUI(connected);
+    });
+
+    // Profile selector: upward-expandable dropdown
+    const profileTrigger = document.getElementById('profileTrigger');
+    const profileDropdown = document.getElementById('profileDropdown');
+    const profileSelector = document.getElementById('profileSelector');
+    const profileTriggerName = profileTrigger.querySelector('.profile-trigger-name');
+    const profileTriggerMeta = profileTrigger.querySelector('.profile-trigger-meta');
+
+    function toggleProfileDropdown(show) {
+      const isOpen = show === undefined ? !profileDropdown.classList.contains('open') : show;
+      profileDropdown.classList.toggle('open', isOpen);
+      profileTrigger.classList.toggle('open', isOpen);
+      profileTrigger.setAttribute('aria-expanded', String(isOpen));
+    }
+
+    function closeProfileDropdown() {
+      profileDropdown.classList.remove('open');
+      profileTrigger.classList.remove('open');
+      profileTrigger.setAttribute('aria-expanded', 'false');
+    }
+
+    profileTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleProfileDropdown();
+    });
+
+    document.querySelectorAll('.profile-option').forEach(option => {
+      option.addEventListener('click', (e) => {
+        // Don't switch profile if clicking action buttons
+        if (e.target.closest('.profile-option-action-btn')) return;
+        e.stopPropagation();
+
+        document.querySelectorAll('.profile-option').forEach(o => {
+          o.classList.remove('active');
+          o.setAttribute('aria-selected', 'false');
+        });
+        option.classList.add('active');
+        option.setAttribute('aria-selected', 'true');
+
+        // Update trigger to show selected profile
+        const name = option.querySelector('.profile-option-name').textContent;
+        const type = option.getAttribute('data-type') || 'local';
+        profileTriggerName.textContent = name;
+        profileTriggerMeta.textContent = type;
+        profileTriggerMeta.className = 'profile-trigger-meta ' + (type === 'url' ? 'url' : '').trim();
+
+        closeProfileDropdown();
+      });
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!profileSelector.contains(e.target)) closeProfileDropdown();
+    });
+
+    // Edit rules — navigate to Settings → Rule Sets
+    function editProfileRules(profileId) {
+      showPage('settings');
+      // Switch to Rule Sets tab
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+      const rulesTab = document.querySelector('.settings-tab[data-tab="rules"]');
+      if (rulesTab) rulesTab.classList.add('active');
+      ['inbound', 'rules', 'tun', 'dns'].forEach(id => {
+        document.getElementById('settings-' + id).classList.toggle('hidden', id !== 'rules');
+      });
+    }
+
+    // Logs filter via stats chips
+    const logStream = document.getElementById('logStream');
+    const statAll = document.getElementById('statAll');
+    const statError = document.getElementById('statError');
+    const statWarn = document.getElementById('statWarn');
+    let activeLogFilter = null;
+
+    function applyLogFilter(level) {
+      const rows = logStream.querySelectorAll('.log-row');
+      if (level === activeLogFilter) {
+        // Toggle off — show all
+        activeLogFilter = null;
+        rows.forEach(r => r.classList.remove('filtered-out'));
+        updateStatChips(null);
+      } else {
+        activeLogFilter = level;
+        rows.forEach(r => {
+          r.classList.toggle('filtered-out', !r.classList.contains(level));
+        });
+        updateStatChips(level);
+      }
+    }
+
+    function updateStatChips(active) {
+      [statAll, statError, statWarn].forEach(chip => {
+        if (!chip) return;
+        chip.classList.remove('active');
+      });
+      if (active === 'error' && statError) statError.classList.add('active');
+      else if (active === 'warn' && statWarn) statWarn.classList.add('active');
+      else if (active === null && statAll) statAll.classList.add('active');
+    }
+
+    if (statAll) {
+      statAll.addEventListener('click', () => applyLogFilter(null));
+    }
+    if (statError) {
+      statError.addEventListener('click', () => applyLogFilter('error'));
+    }
+    if (statWarn) {
+      statWarn.addEventListener('click', () => applyLogFilter('warn'));
+    }
+
+    // Handle dynamically added log rows for current filter
+    const origAppend = logStream.appendChild.bind(logStream);
+    logStream.appendChild = function(child) {
+      const result = origAppend(child);
+      if (activeLogFilter && child.classList && !child.classList.contains(activeLogFilter)) {
+        child.classList.add('filtered-out');
+      }
+      return result;
+    };
+
+    const pauseBtn = document.getElementById('pauseLogs');
+    const autoScrollBtn = document.getElementById('autoScrollBtn');
+    let paused = false;
+    let autoScroll = true;
+
+    pauseBtn.addEventListener('click', () => {
+      paused = !paused;
+      pauseBtn.innerHTML = paused
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Resume'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="4" height="16" x="6" y="4"></rect><rect width="4" height="16" x="14" y="4"></rect></svg> Pause';
+    });
+
+    autoScrollBtn.addEventListener('click', () => {
+      autoScroll = !autoScroll;
+      autoScrollBtn.classList.toggle('active', autoScroll);
+      if (autoScroll) logStream.scrollTop = logStream.scrollHeight;
+    });
+
+    // Simulate live log stream with auto-scroll
+    setTimeout(() => { logStream.scrollTop = logStream.scrollHeight; }, 100);
+
+    const sampleMessages = [
+      { level: 'info', text: 'inbound/mixed[mixed-in]: inbound connection from 127.0.0.1:%PORT%' },
+      { level: 'info', text: 'outbound/direct[direct]: outbound connection to %HOST%:443' },
+      { level: 'info', text: 'router: found process path: C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' },
+      { level: 'warn', text: 'outbound/vless[vless-reality]: handshake took 1.4s' },
+    ];
+    const sampleHosts = ['copilot.tencent.com', 'tracking.miui.com', 'api.github.com', 'sing-box.sagernet.org'];
+    setInterval(() => {
+      if (paused || !autoScroll) return;
+      const msg = sampleMessages[Math.floor(Math.random() * sampleMessages.length)];
+      const host = sampleHosts[Math.floor(Math.random() * sampleHosts.length)];
+      const port = 50000 + Math.floor(Math.random() * 15000);
+      const text = msg.text.replace('%PORT%', port).replace('%HOST%', host);
+      const row = document.createElement('div');
+      row.className = 'log-row ' + msg.level;
+      const now = new Date();
+      const tz = '+0800';
+      const date = now.toISOString().slice(0, 10);
+      const time = now.toTimeString().slice(0, 8);
+      const levelLabel = msg.level === 'info' ? 'INFO' : msg.level === 'warn' ? 'WARN' : 'OK';
+      const ansi = msg.level === 'info' ? '[36mINFO[0m' : msg.level === 'warn' ? '[33mWARN[0m' : '[32mOK[0m';
+      row.innerHTML = '<span class="log-time">' + tz + ' ' + date + ' ' + time + '</span><span class="log-level ' + msg.level + '">' + levelLabel + '</span><span class="log-msg">' + ansi + ' ' + text + '</span>';
+      logStream.appendChild(row);
+      logStream.scrollTop = logStream.scrollHeight;
+    }, 1800);
+  </script>
+</body>
+</html>
