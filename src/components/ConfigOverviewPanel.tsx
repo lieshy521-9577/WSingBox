@@ -11,7 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { ConfigOverview, RouteRuleInfo } from "../types";
-import { RuntimePhase } from "../hooks/useSingbox";
+import { RuntimeDebugSnapshot, RuntimePhase } from "../hooks/useSingbox";
 
 type OverviewSection = "nodes" | "dns" | "rules" | "ruleSets";
 
@@ -19,6 +19,7 @@ interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
   selectedOutboundTag: string | null;
+  runtimeDebug?: RuntimeDebugSnapshot | null;
   isRunning?: boolean;
   runtimePhase?: RuntimePhase;
   onToggleProxy?: () => void;
@@ -29,6 +30,7 @@ function ConfigOverviewPanel({
   overview,
   onEditRouteRule,
   selectedOutboundTag,
+  runtimeDebug,
   isRunning = false,
   runtimePhase = "stopped",
   onToggleProxy,
@@ -50,6 +52,8 @@ function ConfigOverviewPanel({
   const dnsServer = overview.dns_servers[0] ?? null;
   const primaryInbound = overview.inbounds[0] ?? null;
   const activeOutbound = overview.outbounds.find((item) => item.tag === selectedOutboundTag) ?? null;
+  const actualRuntimeRoute = isRunning ? runtimeDebug?.active_leaf_outbound || runtimeDebug?.top_selector_default || null : null;
+  const routeDisplay = actualRuntimeRoute || activeOutbound?.tag || "auto";
   const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
 
   // ── Phase-driven animation state ──
@@ -102,15 +106,15 @@ function ConfigOverviewPanel({
         {/* Shield icon with phase-driven glow + animation */}
         <div
           className={`relative mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-[24px] transition-all duration-500 ${
-            heroAnim === "starting" ? "bg-emerald-500/25 text-emerald-400 shadow-lg shadow-emerald-500/30 animate-hero-glow-in" :
-            heroAnim === "running" ? "bg-emerald-500/20 text-emerald-400 shadow-lg shadow-emerald-500/20" :
-            heroAnim === "stopping" ? "bg-emerald-500/10 text-emerald-400/60 animate-hero-ring-collapse" :
+            heroAnim === "starting" ? "bg-emerald-500/20 text-emerald-600 dark:bg-emerald-500/25 dark:text-emerald-400 shadow-lg shadow-emerald-500/30 animate-hero-glow-in" :
+            heroAnim === "running" ? "bg-emerald-500/15 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400 shadow-lg shadow-emerald-500/20" :
+            heroAnim === "stopping" ? "bg-emerald-500/8 text-emerald-500/70 dark:bg-emerald-500/10 dark:text-emerald-400/60 animate-hero-ring-collapse" :
             "bg-muted text-muted-foreground shadow-none"
           }`}
         >
           {/* Start pulse ring */}
           {heroAnim === "starting" && (
-            <span className="pointer-events-none absolute inset-0 rounded-[24px] border-2 border-emerald-400/40 animate-ping" />
+            <span className="pointer-events-none absolute inset-0 rounded-[24px] border-2 border-emerald-500/40 dark:border-emerald-400/40 animate-ping" />
           )}
           {heroAnim === "starting" ? (
             <Zap size={36} strokeWidth={2} className="animate-hero-pulse-on" />
@@ -147,8 +151,8 @@ function ConfigOverviewPanel({
               className="peer sr-only"
             />
             <span className={`h-7 w-[52px] rounded-full border transition-all duration-500 ${
-              heroAnim === "starting" ? "border-emerald-500/60 bg-emerald-500/30" :
-              heroAnim === "running" ? "border-emerald-500/40 bg-emerald-500/20" :
+              heroAnim === "starting" ? "border-emerald-500/50 bg-emerald-500/25 dark:border-emerald-500/60 dark:bg-emerald-500/30" :
+              heroAnim === "running" ? "border-emerald-500/30 bg-emerald-500/15 dark:border-emerald-500/40 dark:bg-emerald-500/20" :
               heroAnim === "stopping" ? "border-amber-500/40 bg-amber-500/10" :
               "border-border/80 bg-muted"
             }`} />
@@ -177,8 +181,8 @@ function ConfigOverviewPanel({
 
         <div className="flex items-center justify-center gap-10">
           <div className="text-center">
-            <span className="text-base font-bold tabular-nums text-content">{activeOutbound?.tag ?? "auto"}</span>
-            <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">Route</span>
+            <span className="text-base font-bold tabular-nums text-content">{routeDisplay}</span>
+            <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">{actualRuntimeRoute ? "Live route" : "Route"}</span>
           </div>
           <div className="text-center">
             <span className="text-base font-bold tabular-nums text-content">--</span>
@@ -378,11 +382,11 @@ function OverviewCard({
   }>;
 }) {
   const badgeColors: Record<string, string> = {
-    yellow: "bg-yellow-500/20 text-yellow-600 dark:text-yellow-400",
-    green: "bg-green-500/20 text-green-600 dark:text-green-400",
-    blue: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-    purple: "bg-purple-500/20 text-purple-600 dark:text-purple-400",
-    orange: "bg-orange-500/20 text-orange-600 dark:text-orange-400",
+    yellow: "bg-amber-500/15 text-amber-700 dark:bg-yellow-500/20 dark:text-yellow-400",
+    green: "bg-emerald-500/15 text-emerald-700 dark:bg-green-500/20 dark:text-green-400",
+    blue: "bg-blue-500/12 text-blue-700 dark:bg-blue-500/15 dark:text-blue-400",
+    purple: "bg-purple-500/15 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400",
+    orange: "bg-orange-500/15 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400",
   };
 
   return (

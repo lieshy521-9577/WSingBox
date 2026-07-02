@@ -29,8 +29,8 @@
   --border-muted: 230 236 244;
 
   --text-primary: 15 23 42;
-  --text-secondary: 68 87 114;
-  --text-muted: 114 134 160;
+  --text-secondary: 30 41 59;
+  --text-muted: 71 85 105;
   --text-inverse: 255 255 255;
 
   /* Legacy aliases */
@@ -109,9 +109,9 @@ body {
   font-family: "Aptos", "Segoe UI Variable", "Segoe UI", "SF Pro Display", sans-serif;
   overflow: hidden;
   background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.98), transparent 24%),
-    radial-gradient(circle at 85% 14%, rgba(59, 130, 246, 0.08), transparent 18%),
-    linear-gradient(135deg, rgb(247 250 253) 0%, rgb(var(--bg-base)) 42%, rgb(233 240 248) 100%);
+    radial-gradient(circle at 12% 0%, rgba(59, 130, 246, 0.05), transparent 24%),
+    radial-gradient(circle at 88% 10%, rgba(59, 130, 246, 0.04), transparent 20%),
+    linear-gradient(145deg, rgb(248 250 253) 0%, rgb(var(--bg-base)) 50%, rgb(241 245 249) 100%);
   color: rgb(var(--text-primary));
 }
 
@@ -126,10 +126,10 @@ body::before {
   content: "";
   position: fixed; inset: 0; pointer-events: none;
   background-image:
-    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+    linear-gradient(rgb(var(--text-muted) / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--text-muted) / 0.06) 1px, transparent 1px);
   background-size: 24px 24px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 82%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.3), transparent 82%);
 }
 
 [data-theme="dark"] body::before {
@@ -249,9 +249,9 @@ body::before {
 .input {
   width: 100%; border-radius: 0.875rem;
   border: 1px solid rgb(var(--border));
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+  background: rgb(var(--bg-surface) / 0.8);
   color: rgb(var(--text-primary)); padding: 0.75rem 0.9rem; outline: none;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.75), 0 10px 22px rgba(15,23,42,0.04);
+  transition: border-color 150ms, box-shadow 150ms;
 }
 
 [data-theme="dark"] .input {
@@ -284,9 +284,9 @@ body::before {
 .btn-secondary {
   border: 1px solid rgb(var(--border-muted) / 0.88);
   background: rgb(var(--bg-surface) / 0.6); color: rgb(var(--text-secondary));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.68);
+  transition: all 150ms ease;
 }
-.btn-secondary:hover { background: rgb(var(--bg-elevated) / 0.95); color: rgb(var(--text-primary)); }
+.btn-secondary:hover { background: rgb(var(--bg-elevated) / 0.95); color: rgb(var(--text-primary)); border-color: rgb(var(--border)); }
 
 [data-theme="dark"] .btn-secondary {
   border-color: rgb(51 65 85 / 0.82); background: rgb(15 23 42 / 0.55);
@@ -311,3 +311,103 @@ body::before {
 /* Title bar drag region */
 [data-tauri-drag-region] { -webkit-app-region: drag; }
 button, input, textarea, select { -webkit-app-region: no-drag; }
+
+/* ================================================================
+   Panel card — primary surface container
+   ================================================================ */
+
+.panel-card {
+  background: rgb(var(--bg-surface) / 0.72);
+  border: 1px solid rgb(var(--border) / 0.55);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 4px 12px rgb(15 23 42 / 0.03);
+}
+
+[data-theme="dark"] .panel-card {
+  background: rgb(var(--bg-surface) / 0.62);
+  border-color: rgb(var(--border) / 0.65);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.2),
+    0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+/* ================================================================
+   Subtle row — node list item default state
+   ================================================================ */
+
+.subtle-row {
+  border: 1px solid rgb(var(--border-muted) / 0.5);
+  background: rgb(var(--bg-surface) / 0.4);
+  transition: all 150ms ease;
+}
+
+.subtle-row:hover {
+  border-color: rgb(var(--border) / 0.8);
+  background: rgb(var(--bg-elevated) / 0.7);
+}
+
+[data-theme="dark"] .subtle-row {
+  border-color: rgb(var(--border-muted) / 0.35);
+  background: rgb(var(--bg-surface) / 0.3);
+}
+
+[data-theme="dark"] .subtle-row:hover {
+  border-color: rgb(var(--border) / 0.6);
+  background: rgb(var(--bg-elevated) / 0.5);
+}
+
+/* ================================================================
+   Mode toggle — segmented control for latency mode
+   ================================================================ */
+
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 14px;
+  border: 1px solid rgb(var(--border-muted) / 0.6);
+  background: rgb(var(--bg-muted) / 0.4);
+  padding: 3px;
+}
+
+[data-theme="dark"] .mode-toggle {
+  border-color: rgb(var(--border) / 0.4);
+  background: rgb(var(--bg-muted) / 0.3);
+}
+
+.mode-toggle-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: rgb(var(--text-muted));
+  border-radius: 11px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.mode-toggle-button:hover {
+  color: rgb(var(--text-secondary));
+  background: rgb(var(--bg-surface) / 0.5);
+}
+
+.mode-toggle-button.active {
+  background: rgb(var(--bg-surface));
+  color: rgb(var(--primary-500));
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.06),
+    0 2px 6px rgb(15 23 42 / 0.04);
+}
+
+[data-theme="dark"] .mode-toggle-button.active {
+  background: rgb(var(--bg-elevated) / 0.8);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.2),
+    0 2px 8px rgb(0 0 0 / 0.12);
+}

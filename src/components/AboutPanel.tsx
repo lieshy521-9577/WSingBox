@@ -43,19 +43,19 @@ function AboutPanel() {
             <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
           </svg>
         </div>
-        <h1 className="text-[1.25rem] font-bold text-primary">SingBox Client</h1>
-        <p className="mt-1 text-[13px] text-muted">v{version} · sing-box core {coreVersion}</p>
-        <p className="mx-auto mt-3 max-w-xs text-[13px] text-secondary">
+        <h1 className="text-[1.25rem] font-bold text-content">SingBox Client</h1>
+        <p className="mt-1 text-[13px] text-content-muted">v{version} · sing-box core {coreVersion}</p>
+        <p className="mx-auto mt-3 max-w-xs text-[13px] text-content-secondary">
           A desktop GUI for sing-box built with Tauri and React. Designed for clarity, speed, and control.
         </p>
         <div className="mt-4 flex items-center justify-center gap-2.5">
           <a href="#" onClick={(e) => { e.preventDefault(); open("https://sing-box.sagernet.org/"); }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[12px] font-medium text-secondary hover:bg-muted/50 hover:text-primary"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[12px] font-medium text-content-secondary hover:bg-muted/50 hover:text-content"
           >
             Docs <ExternalLink size={11} />
           </a>
           <a href="#" onClick={(e) => { e.preventDefault(); open("https://sing-box.sagernet.org/examples/"); }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[12px] font-medium text-secondary hover:bg-muted/50 hover:text-primary"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[12px] font-medium text-content-secondary hover:bg-muted/50 hover:text-content"
           >
             Examples <ExternalLink size={11} />
           </a>
@@ -65,8 +65,8 @@ function AboutPanel() {
       {/* Diagnostics */}
       <section className="rounded-[18px] border border-border bg-surface/60">
         <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-          <Gauge size={15} className="text-muted" />
-          <span className="text-[13px] font-semibold text-primary">Runtime Diagnostics</span>
+          <Gauge size={15} className="text-content-muted" />
+          <span className="text-[13px] font-semibold text-content">Runtime Diagnostics</span>
         </div>
         {runtimeInfo ? (
           <div>
@@ -80,14 +80,14 @@ function AboutPanel() {
             />
           </div>
         ) : (
-          <div className="px-5 py-4 text-[13px] text-muted">
+          <div className="px-5 py-4 text-[13px] text-content-muted">
             Runtime diagnostics are unavailable until the desktop runtime responds.
           </div>
         )}
       </section>
 
       <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-muted/30 px-4 py-3">
-        <span className="text-[11px] text-muted">Quit restores the system proxy state and stops the bundled sing-box core.</span>
+        <span className="text-[11px] text-content-muted">Quit restores the system proxy state and stops the bundled sing-box core.</span>
         <button
           onClick={() => invoke("quit_application")}
           className="btn-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[12px]"
@@ -102,8 +102,8 @@ function AboutPanel() {
 function DebugRow({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
   return (
     <div className={`px-5 py-3 ${last ? "" : "border-b border-border/60"}`}>
-      <p className="text-[10px] uppercase tracking-[0.14em] text-muted">{label}</p>
-      <p className="mt-1 break-all text-[12px] text-secondary">{value}</p>
+      <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
+      <p className="mt-1 break-all text-[12px] text-content-secondary">{value}</p>
     </div>
   );
 }

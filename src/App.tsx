@@ -154,14 +154,36 @@ function App() {
     if (singbox.activeConfigProfileId === editingConfigProfile.id) { await loadOverview(); await singbox.onConfigImported(""); }
   }, [editingConfigProfile, loadOverview, singbox]);
 
-  const handleCopySubscriptionUrl = useCallback(async (profileId: string) => {
+  const handleExportProfile = useCallback(async (profileId: string) => {
     try {
       const profile = singbox.configProfiles.find((item) => item.id === profileId);
-      if (!profile || profile.source_kind !== "url") throw new Error("This profile does not have an exportable subscription URL");
-      await navigator.clipboard.writeText(profile.source_path);
-      singbox.setError(null);
-    } catch (err) { singbox.setError(String(err)); }
-  }, [singbox]);
+      if (!profile) throw new Error("Profile not found");
+
+      if (profile.source_kind === "url") {
+        await navigator.clipboard.writeText(profile.source_path);
+        singbox.setError(null);
+        addToast("success", `Subscription URL copied: ${profile.name}`);
+      } else {
+        const config = await invoke<Record<string, unknown>>("get_config_profile_json", { profileId });
+        await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+        singbox.setError(null);
+        addToast("success", `Profile JSON copied: ${profile.name}`);
+      }
+    } catch (err) {
+      const msg = String(err);
+      singbox.setError(msg);
+      addToast("error", msg);
+    }
+  }, [singbox, addToast]);
+
+  const handleRefreshConfigProfile = useCallback(async (profileId: string) => {
+    try {
+      await singbox.refreshConfigProfile(profileId);
+      addToast("success", "Profile refreshed successfully");
+    } catch (err) {
+      addToast("error", String(err));
+    }
+  }, [singbox, addToast]);
 
   return (
     <div className="flex flex-col h-screen p-2.5">
@@ -183,8 +205,8 @@ function App() {
           onSwitchConfigProfile={(id) => void singbox.switchConfigProfile(id)}
           onEditConfigProfile={(id) => void handleOpenConfigProfileEditor(id)}
           onDeleteConfigProfile={singbox.deleteConfigProfile}
-          onRefreshConfigProfile={(id) => void singbox.refreshConfigProfile(id)}
-          onCopySubscriptionUrl={(id) => void handleCopySubscriptionUrl(id)}
+          onRefreshConfigProfile={(id) => void handleRefreshConfigProfile(id)}
+          onExportProfile={(id) => void handleExportProfile(id)}
         />
 
         {/* Workspace */}
@@ -198,6 +220,7 @@ function App() {
                     overview={configOverview}
                     onEditRouteRule={handleEditRouteRule}
                     selectedOutboundTag={singbox.selectedOutboundTag}
+                    runtimeDebug={singbox.runtimeDebug}
                     isRunning={singbox.isRunning}
                     runtimePhase={singbox.runtimePhase}
                     onToggleProxy={() => void singbox.toggleProxy()}
@@ -208,8 +231,8 @@ function App() {
                 <div className="page-entrance flex h-full items-center justify-center">
                   <div className="rounded-2xl border border-border bg-muted/30 p-8 text-center max-w-md w-full">
                     <p className="section-label mb-2">Ready to configure</p>
-                    <h2 className="text-[1.35rem] font-semibold text-primary">No configuration loaded</h2>
-                    <p className="mx-auto mt-2 max-w-md text-[13px] text-secondary">
+                    <h2 className="text-[1.35rem] font-semibold text-content">No configuration loaded</h2>
+                    <p className="mx-auto mt-2 max-w-md text-[13px] text-content-secondary">
                       Import a profile to inspect routes, manage nodes, and control sing-box from one workspace.
                     </p>
                     <button
@@ -293,6 +316,17 @@ function App() {
         onImportFile={(filePath) => handleImportConfig(filePath)}
         onImportUrl={(url) => handleImportConfigUrl(url)}
       />
+
+      {/* Toast notifications */}
+      {toasts.length > 0 && (
+        <div className="pointer-events-none fixed bottom-5 right-5 z-[9999] flex flex-col gap-2">
+          {toasts.map((toast) => (
+            <div key={toast.id} className="pointer-events-auto">
+              <Toast toast={toast} onDismiss={dismissToast} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

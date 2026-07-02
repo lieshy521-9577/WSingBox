@@ -64,31 +64,31 @@ function LogViewer() {
   const filteredLogs = filter === "all" ? logs : logs.filter((l) => l.level === filter);
 
   const levelColors: Record<string, string> = {
-    info: "#7dcfff",
-    warn: "#facc15",
-    error: "#f87171",
-    debug: "#94a3b8",
+    info: "#0284c7",
+    warn: "#d97706",
+    error: "#dc2626",
+    debug: "#64748b",
   };
 
   return (
-    <div className="page-entrance flex h-full min-h-0 flex-col rounded-2xl border border-slate-900 bg-slate-950 overflow-hidden">
+    <div className="page-entrance flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface/80 dark:border-slate-900 dark:bg-slate-950">
       {/* Toolbar */}
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-800/80">
+      <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5 dark:border-slate-800/80">
         <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5 text-[11px] tracking-[0.15em] text-slate-500">
-            <TerminalSquare size={12} className="text-sky-400" />
+          <span className="flex items-center gap-1.5 text-[11px] tracking-[0.15em] text-content-muted dark:text-slate-500">
+            <TerminalSquare size={12} className="text-primary-500 dark:text-sky-400" />
             <span className="uppercase">Stream</span>
-            <strong className="text-slate-300">{paused ? "Paused" : loading ? "..." : "Live"}</strong>
+            <strong className="text-content dark:text-slate-300">{paused ? "Paused" : loading ? "..." : "Live"}</strong>
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] tracking-[0.15em] text-slate-500">
-            <Activity size={12} className="text-slate-400" />
+          <span className="flex items-center gap-1.5 text-[11px] tracking-[0.15em] text-content-muted dark:text-slate-500">
+            <Activity size={12} className="text-content-secondary dark:text-slate-400" />
             <span className="uppercase">Entries</span>
-            <strong className="text-slate-300">{logs.length}</strong>
+            <strong className="text-content dark:text-slate-300">{logs.length}</strong>
           </span>
           <button
             onClick={() => setFilter(filter === "error" ? "all" : "error")}
             className={`flex items-center gap-1.5 text-[11px] tracking-[0.15em] rounded-full px-2.5 py-1 transition-colors ${
-              filter === "error" ? "bg-red-500/15 text-red-400" : "text-slate-500 hover:text-red-400"
+              filter === "error" ? "bg-red-500/15 text-red-500 dark:text-red-400" : "text-content-muted hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
             }`}
           >
             <ShieldAlert size={12} />
@@ -98,7 +98,7 @@ function LogViewer() {
           <button
             onClick={() => setFilter(filter === "warn" ? "all" : "warn")}
             className={`flex items-center gap-1.5 text-[11px] tracking-[0.15em] rounded-full px-2.5 py-1 transition-colors ${
-              filter === "warn" ? "bg-yellow-500/15 text-yellow-400" : "text-slate-500 hover:text-yellow-400"
+              filter === "warn" ? "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400" : "text-content-muted hover:text-yellow-600 dark:text-slate-500 dark:hover:text-yellow-400"
             }`}
           >
             <Activity size={12} />
@@ -109,14 +109,14 @@ function LogViewer() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setPaused((v) => !v)}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border/60 px-2.5 text-[11px] text-content-secondary hover:bg-muted/50 hover:text-content dark:border-slate-700 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white"
           >
             {paused ? <Play size={12} /> : <Pause size={12} />}
             {paused ? "Resume" : "Pause"}
           </button>
           <button
             onClick={() => void copyLogs()}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border/60 px-2.5 text-[11px] text-content-secondary hover:bg-muted/50 hover:text-content dark:border-slate-700 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white"
           >
             <Copy size={12} />
             {copied ? "Copied" : "Copy"}
@@ -124,7 +124,9 @@ function LogViewer() {
           <button
             onClick={() => setAutoScroll((v) => !v)}
             className={`inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border px-2.5 text-[11px] transition-colors ${
-              autoScroll ? "border-sky-500/40 bg-sky-500/10 text-sky-300" : "border-slate-700 text-slate-300 hover:bg-white/5 hover:text-white"
+              autoScroll
+                ? "border-primary-500/30 bg-primary-500/10 text-primary-500 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
+                : "border-border/60 text-content-secondary hover:bg-muted/50 hover:text-content dark:border-slate-700 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white"
             }`}
           >
             <ArrowDown size={12} />
@@ -132,7 +134,7 @@ function LogViewer() {
           </button>
           <button
             onClick={() => void clearLogs()}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 px-2.5 text-[11px] text-slate-300 hover:bg-white/5 hover:text-white"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border/60 px-2.5 text-[11px] text-content-secondary hover:bg-red-500/10 hover:text-red-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white"
           >
             <Trash2 size={12} />
             Clear
@@ -152,22 +154,22 @@ function LogViewer() {
         }}
       >
         {loading ? (
-          <p className="py-8 text-center text-slate-500" style={{ fontFamily: "inherit" }}>Loading logs...</p>
+          <p className="py-8 text-center text-content-muted dark:text-slate-500" style={{ fontFamily: "inherit" }}>Loading logs...</p>
         ) : filteredLogs.length === 0 ? (
-          <p className="py-8 text-center text-slate-500" style={{ fontFamily: "inherit" }}>
+          <p className="py-8 text-center text-content-muted dark:text-slate-500" style={{ fontFamily: "inherit" }}>
             {filter !== "all" ? `No ${filter} entries` : "No logs yet"}
           </p>
         ) : (
           filteredLogs.map((log) => (
-            <div key={log.id} className="log-row flex gap-3 rounded-md px-2 py-0.5 hover:bg-white/[0.04]">
-              <span className="shrink-0 select-none text-slate-600">{log.timestamp || "--"}</span>
+            <div key={log.id} className="log-row flex gap-3 rounded-md px-2 py-0.5 hover:bg-muted/40 dark:hover:bg-white/[0.04]">
+              <span className="shrink-0 select-none text-content-muted dark:text-slate-600">{log.timestamp || "--"}</span>
               <span
                 className="w-14 shrink-0 select-none text-right text-[11px] font-semibold uppercase"
-                style={{ color: levelColors[log.level] || "#94a3b8" }}
+                style={{ color: levelColors[log.level] || "#64748b" }}
               >
                 {log.level}
               </span>
-              <span className="break-all text-slate-300/80">{log.message}</span>
+              <span className="break-all text-content/80 dark:text-slate-300/80">{log.message}</span>
             </div>
           ))
         )}

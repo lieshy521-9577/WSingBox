@@ -32,7 +32,7 @@ function ModalShell({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/58 px-4 py-5 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 dark:bg-slate-950/58 px-4 py-5 backdrop-blur-sm">
       <div
         className={`panel-card modal-shell flex max-h-[min(90vh,980px)] w-full flex-col overflow-hidden rounded-[26px] p-0 shadow-2xl ${sizeClassMap[size]}`}
       >

@@ -35,15 +35,15 @@ function Toast({ toast, onDismiss }: ToastProps) {
         visible ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"
       } ${
         toast.type === "success"
-          ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
-          : "border-red-500/30 bg-red-500/15 text-red-200"
+          ? "border-emerald-500/30 bg-emerald-50/90 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
+          : "border-red-500/30 bg-red-50/90 text-red-800 dark:bg-red-500/15 dark:text-red-200"
       }`}
       style={{ minWidth: 280 }}
     >
       {toast.type === "success" ? (
-        <CheckCircle2 size={18} className="shrink-0 text-emerald-400" />
+        <CheckCircle2 size={18} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
       ) : (
-        <AlertTriangle size={18} className="shrink-0 text-red-400" />
+        <AlertTriangle size={18} className="shrink-0 text-red-600 dark:text-red-400" />
       )}
       <span className="flex-1 text-[13px] leading-snug">{toast.message}</span>
       <button

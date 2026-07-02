@@ -33,11 +33,13 @@ Created a complete UI redesign package for the SingBox desktop proxy client base
 ## Notes and follow-up
 
 - `index.html` was intentionally **not** overwritten because it is the Vite entry point for the existing React + Tauri app. The prototype lives in `prototype.html` and can be opened directly in any browser.
-- Next steps to fully implement the design:
-  1. Map the tokens in `design-system.md` to the existing Tailwind config (`tailwind.config.js`) and CSS variables (`src/styles/global.css`).
-  2. Refactor `src/components/Sidebar.tsx`, `ProxyControl.tsx`, `ConfigOverviewPanel.tsx`, `NodeList.tsx`, `LogViewer.tsx`, `SettingsPanel.tsx`, and `AboutPanel.tsx` to match the prototype layout and component specs.
-  3. Add mobile bottom navigation component and wire it to the existing page state in `App.tsx`.
-  4. Run a contrast/keyboard audit against the implemented components.
+- Recent implementation fixes applied to `src/`:
+  1. **Light mode contrast** — darkened `--text-secondary` / `--text-muted` tokens; replaced ambiguous `text-primary`/`text-secondary`/`text-muted` classes with semantic `text-content`/`text-content-secondary`/`text-content-muted` in Sidebar, TitleBar, AboutPanel, App empty state.
+  2. **Missing surface classes** — added `.panel-card`, `.subtle-row`, `.mode-toggle` / `.mode-toggle-button` definitions in `global.css` so panels, rows, and the latency mode control render correctly in light mode.
+  3. **LogViewer theme-aware** — removed hardcoded `bg-slate-950`/`text-slate-300` terminal colors; now uses semantic surface/content tokens with dark variants.
+  4. **Overview live route** — `ConfigOverviewPanel` now receives `runtimeDebug` and displays the actual `active_leaf_outbound` as "Live route" when sing-box is running, avoiding the mismatch where the route showed a newly selected profile while the runtime was still on the old node.
+  5. **Profile export/refresh feedback** — wired the existing Toast system into the UI; added success/error toasts for copy-subscription-URL, copy-profile-JSON, and refresh-from-URL actions; added a Refresh button for URL profiles in the sidebar dropdown.
+  6. **Node latency duplicate test** — fixed `NodeList` auto-test running twice under React StrictMode by guarding with `useRef`.
 
 ## Files created
 

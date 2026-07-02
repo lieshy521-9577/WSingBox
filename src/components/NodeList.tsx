@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
@@ -77,6 +77,9 @@ function NodeList({
   const [latencyMode, setLatencyMode] = useState<"auto" | "connect" | "http">("auto");
   const [selectedDetailNode, setSelectedDetailNode] = useState<ProxyNode | null>(null);
   const [showDetail, setShowDetail] = useState(false);
+
+  // Prevent duplicate auto-test from React StrictMode double-invocation
+  const autoTestedRef = useRef(false);
 
   const nodeMap = useMemo(
     () => Object.fromEntries(nodes.map((node) => [node.id, node])),
@@ -174,9 +177,10 @@ function NodeList({
   }, [nodeMap, runtimeLeafNodeId]);
 
   useEffect(() => {
-    if (testing || nodes.length === 0 || Object.keys(latencies).length > 0) return;
+    if (testing || nodes.length === 0 || autoTestedRef.current) return;
+    autoTestedRef.current = true;
     void testAllLatency();
-  }, [latencies, nodes.length, testAllLatency, testing]);
+  }, [nodes.length, testAllLatency, testing]);
 
   const handleSelectNodeRow = (node: ProxyNode) => {
     setSelectedDetailNode(node);
@@ -232,7 +236,7 @@ function NodeList({
                     <div
                       onClick={() => onSelect(profile.tag)}
                       className={`flex cursor-pointer items-center gap-2 px-3.5 py-2.5 transition-all ${
-                        isLiveGroup ? "bg-emerald-500/8" :
+                        isLiveGroup ? "bg-emerald-500/10 dark:bg-emerald-500/8" :
                         isSwitchingGroup ? "bg-primary-600/5" :
                         showSelectedGroup ? "bg-primary-600/10" : "hover:bg-muted/30"
                       }`}
@@ -243,7 +247,7 @@ function NodeList({
                       </button>
                       <Layers3 size={15} className={`${isSelectedGroup ? "text-primary-500" : "text-yellow-500"} shrink-0`} />
                       <span className="text-sm font-medium text-content">{profile.tag}</span>
-                      <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
+                      <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-yellow-500/20 dark:text-yellow-400">
                         {profile.profile_type}
                       </span>
                       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
@@ -276,7 +280,7 @@ function NodeList({
                               <button key={`${profile.tag}-${memberTag}`} type="button"
                                 onClick={() => { onSelect(memberTag); if (memberNode) handleSelectNodeRow(memberNode); }}
                                 className={`inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-left transition-all ${
-                                  isLiveNode ? "border-emerald-500/30 bg-emerald-500/8" :
+                                  isLiveNode ? "border-emerald-500/30 bg-emerald-500/10 dark:bg-emerald-500/8" :
                                   showSelected ? "border-primary-500/30 bg-primary-600/10" :
                                   "border-border/60 bg-card/40 hover:border-border hover:bg-card"
                                 }`}>
@@ -286,7 +290,7 @@ function NodeList({
                                  memberProfile ? <Layers3 size={13} className="shrink-0 text-yellow-500" /> :
                                  <Server size={13} className="shrink-0 text-content-muted" />}
                                 <span className="max-w-[12rem] truncate text-xs font-medium text-content">{memberTag}</span>
-                                {memberProfile && <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] text-yellow-600 dark:text-yellow-400">{memberProfile.profile_type}</span>}
+                                {memberProfile && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-yellow-500/20 dark:text-yellow-400">{memberProfile.profile_type}</span>}
                                 {memberNode && <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">{PROTOCOL_LABELS[memberNode.node_type as ProtocolType] || memberNode.node_type}</span>}
                                 {isSwitchingTarget && <span className="text-[10px] text-primary-500">Switching</span>}
                                 {isLiveNode && !isSwitchingTarget && <span className="text-[10px] text-emerald-500">Live</span>}
@@ -329,7 +333,7 @@ function NodeList({
                     <div key={node.id}
                       onClick={() => { onSelect(node.id); handleSelectNodeRow(node); }}
                       className={`group flex cursor-pointer items-center gap-3 rounded-[18px] border px-3 py-2.5 transition-all ${
-                        isRuntimeNode ? "border-emerald-500/30 bg-emerald-500/8" :
+                        isRuntimeNode ? "border-emerald-500/30 bg-emerald-500/10 dark:bg-emerald-500/8" :
                         showSelected ? "border-primary-500/30 bg-primary-600/10" :
                         isSwitchingTarget ? "border-primary-500/30 bg-primary-600/5" :
                         "subtle-row"
@@ -428,7 +432,7 @@ function NodeDetailPanel({
           <span className="flex h-11 w-11 items-center justify-center rounded-full bg-muted text-xl">{flag}</span>
           <div>
             <h3 className="text-base font-bold text-content">{node.name}</h3>
-            <span className="rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+            <span className="rounded bg-blue-500/12 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-400">
               {protocolLabel}
             </span>
           </div>

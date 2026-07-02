@@ -19,13 +19,13 @@ function TitleBar({ theme, onToggleTheme, onCloseToTray }: TitleBarProps) {
             </svg>
           </div>
           <div>
-            <p className="text-[13px] font-semibold text-primary">SingBox Client</p>
+            <p className="text-[13px] font-semibold text-content">SingBox Client</p>
           </div>
         </div>
       </div>
       <div className="flex items-center gap-1">
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-muted transition-colors hover:bg-muted/50 hover:text-primary"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-muted transition-colors hover:bg-muted/50 hover:text-content"
           onClick={onToggleTheme}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
@@ -33,19 +33,19 @@ function TitleBar({ theme, onToggleTheme, onCloseToTray }: TitleBarProps) {
         </button>
         <div className="mx-1 h-4 w-px bg-border/60" />
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-secondary transition-colors hover:bg-muted/50"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-secondary transition-colors hover:bg-muted/50 hover:text-content"
           onClick={() => { void getCurrentWindow().minimize(); }}
         >
           <Minus size={14} />
         </button>
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-secondary transition-colors hover:bg-muted/50"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-secondary transition-colors hover:bg-muted/50 hover:text-content"
           onClick={() => { void getCurrentWindow().toggleMaximize(); }}
         >
           <Square size={11} />
         </button>
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-secondary transition-colors hover:bg-error/80 hover:text-white"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-secondary transition-colors hover:bg-error/80 hover:text-white"
           onClick={onCloseToTray}
         >
           <X size={14} />
