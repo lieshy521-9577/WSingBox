@@ -46,12 +46,12 @@ function ConfigOverviewPanel({
     id: OverviewSection;
     label: string;
     icon: React.ReactNode;
-    count: string;
+    count: number;
   }> = [
-    { id: "nodes", label: "Nodes", icon: <Network size={16} />, count: `${proxyNodes.length}` },
-    { id: "dns", label: "DNS", icon: <Globe size={16} />, count: `${overview.dns_servers.length}` },
-    { id: "rules", label: "Rules", icon: <Route size={16} />, count: `${overview.route_rules_count}` },
-    { id: "ruleSets", label: "Rule Sets", icon: <FileJson size={16} />, count: `${overview.rule_sets.length}` },
+    { id: "nodes", label: "Nodes", icon: <Network size={16} />, count: proxyNodes.length },
+    { id: "dns", label: "DNS", icon: <Globe size={16} />, count: overview.dns_servers.length },
+    { id: "rules", label: "Rules", icon: <Route size={16} />, count: overview.route_rules_count },
+    { id: "ruleSets", label: "Rule Sets", icon: <FileJson size={16} />, count: overview.rule_sets.length },
   ];
 
   return (
@@ -136,7 +136,7 @@ function ConfigOverviewPanel({
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-muted">Configuration Overview</p>
           <h2 className="text-[1.2rem] font-semibold tracking-tight text-content">Runtime snapshot</h2>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-[14px] border border-border/60 bg-muted/30 p-1.5">
           {sectionTabs.map((tab) => {
             const active = activeSection === tab.id;
             return (
@@ -144,10 +144,10 @@ function ConfigOverviewPanel({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveSection(tab.id)}
-                className={`group inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition-all ${
+                className={`group inline-flex items-center gap-2 rounded-[10px] px-3.5 py-2 text-sm font-medium transition-all ${
                   active
-                    ? "border-primary-500/30 bg-primary-500/10 text-primary-500 shadow-sm"
-                    : "border-border/70 bg-surface/60 text-content-secondary hover:border-primary-500/25 hover:bg-primary-500/5 hover:text-content"
+                    ? "bg-surface text-content shadow-sm"
+                    : "text-content-muted hover:bg-surface/70 hover:text-content"
                 }`}
                 aria-pressed={active}
               >
@@ -155,13 +155,6 @@ function ConfigOverviewPanel({
                   {tab.icon}
                 </span>
                 <span>{tab.label}</span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
-                    active ? "bg-primary-500/20 text-primary-500" : "bg-surface-elevated text-content-muted"
-                  }`}
-                >
-                  {tab.count}
-                </span>
               </button>
             );
           })}
