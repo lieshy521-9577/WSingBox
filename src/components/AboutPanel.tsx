@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
-import { ExternalLink, Gauge, Info } from "lucide-react";
+import { ExternalLink, Gauge } from "lucide-react";
 
 interface CoreRuntimeInfo {
   binary_path: string;
@@ -19,148 +19,91 @@ function AboutPanel() {
   const [runtimeInfo, setRuntimeInfo] = useState<CoreRuntimeInfo | null>(null);
 
   useEffect(() => {
-    getVersion()
-      .then(setVersion)
-      .catch(() => setVersion("0.1.0"));
+    getVersion().then(setVersion).catch(() => setVersion("0.1.0"));
   }, []);
 
   useEffect(() => {
-    const loadCoreVersion = async () => {
-      try {
-        const result = await invoke<string>("get_singbox_core_version");
-        setCoreVersion(result || "Unknown");
-      } catch {
-        setCoreVersion("Unknown");
-      }
-    };
-
-    void loadCoreVersion();
+    invoke<string>("get_singbox_core_version")
+      .then((r) => setCoreVersion(r || "Unknown"))
+      .catch(() => setCoreVersion("Unknown"));
   }, []);
 
   useEffect(() => {
-    const loadRuntimeInfo = async () => {
-      try {
-        const result = await invoke<CoreRuntimeInfo>("get_core_runtime_info");
-        setRuntimeInfo(result);
-      } catch {
-        setRuntimeInfo(null);
-      }
-    };
-
-    void loadRuntimeInfo();
+    invoke<CoreRuntimeInfo>("get_core_runtime_info")
+      .then(setRuntimeInfo)
+      .catch(() => setRuntimeInfo(null));
   }, []);
 
   return (
     <div className="page-entrance space-y-4">
-      <section className="panel-card rounded-[22px] p-3.5">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-2 text-content-secondary">
-              <Info size={16} />
-              <span className="section-label">About</span>
-            </div>
-            <h2 className="mt-1.5 text-[1.12rem] font-semibold tracking-tight text-content">SingBox Client</h2>
-          </div>
-          <div className="about-header-actions flex flex-wrap items-center gap-2">
-            <AboutPill label="App" value={version} />
-            <AboutPill label="Core" value={coreVersion} />
-            <AboutPill label="Runtime" value={runtimeInfo?.running ? "Running" : "Idle"} />
-            <AboutPill label="Mode" value={runtimeInfo?.tun_enabled ? "TUN" : "Mixed"} />
-            <button
-              type="button"
-              onClick={() => open("https://sing-box.sagernet.org/")}
-              className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
-            >
-              Docs
-              <ExternalLink size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => open("https://sing-box.sagernet.org/examples/")}
-              className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
-            >
-              Samples
-              <ExternalLink size={13} />
-            </button>
-          </div>
+      {/* Brand header */}
+      <section className="rounded-[20px] border border-border bg-surface/60 p-6 text-center">
+        <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary-500/12 mb-3">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary-500">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+          </svg>
+        </div>
+        <h1 className="text-[1.25rem] font-bold text-primary">SingBox Client</h1>
+        <p className="mt-1 text-[13px] text-muted">v{version} · sing-box core {coreVersion}</p>
+        <p className="mx-auto mt-3 max-w-xs text-[13px] text-secondary">
+          A desktop GUI for sing-box built with Tauri and React. Designed for clarity, speed, and control.
+        </p>
+        <div className="mt-4 flex items-center justify-center gap-2.5">
+          <a href="#" onClick={(e) => { e.preventDefault(); open("https://sing-box.sagernet.org/"); }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[12px] font-medium text-secondary hover:bg-muted/50 hover:text-primary"
+          >
+            Docs <ExternalLink size={11} />
+          </a>
+          <a href="#" onClick={(e) => { e.preventDefault(); open("https://sing-box.sagernet.org/examples/"); }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[12px] font-medium text-secondary hover:bg-muted/50 hover:text-primary"
+          >
+            Examples <ExternalLink size={11} />
+          </a>
         </div>
       </section>
 
-      <section className="panel-card rounded-[20px] p-3.5">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex items-center gap-2 text-content-secondary">
-              <Gauge size={16} />
-              <span className="section-label">Diagnostics</span>
-            </div>
-            <div className="about-diagnostics-actions flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => open("https://sing-box.sagernet.org/migration/")}
-                className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
-              >
-                Migration Notes
-                <ExternalLink size={13} />
-              </button>
-              <button
-                type="button"
-                onClick={() => invoke("quit_application")}
-                className="btn-secondary inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm"
-              >
-                Exit Client
-                <ExternalLink size={13} />
-              </button>
-            </div>
-          </div>
-
-          {runtimeInfo ? (
-            <div className="overflow-hidden rounded-[18px] border border-border/70">
-              <DebugRow label="Core Path" value={runtimeInfo.binary_path || "Unavailable"} />
-              <DebugRow label="Runtime Config" value={runtimeInfo.config_path || "Unavailable"} />
-              <DebugRow label="Runtime Log" value={runtimeInfo.log_path || "Unavailable"} />
-              <DebugRow
-                label="Session"
-                value={`${runtimeInfo.running ? "Running" : "Stopped"}${runtimeInfo.pid ? ` | PID ${runtimeInfo.pid}` : ""}${runtimeInfo.tun_enabled ? " | TUN" : ""}`}
-                last
-              />
-            </div>
-          ) : (
-            <div className="rounded-[18px] border border-border/70 px-3 py-3 text-sm text-content-secondary">
-              Runtime diagnostics are unavailable until the desktop runtime responds.
-            </div>
-          )}
-
-          <div className="rounded-2xl border border-border/70 bg-white/35 px-3 py-2 text-[11px] leading-5 text-content-secondary dark:bg-slate-950/20">
-            Quit restores the system proxy state and stops the bundled sing-box core.
-          </div>
+      {/* Diagnostics */}
+      <section className="rounded-[18px] border border-border bg-surface/60">
+        <div className="flex items-center gap-2 border-b border-border px-5 py-3">
+          <Gauge size={15} className="text-muted" />
+          <span className="text-[13px] font-semibold text-primary">Runtime Diagnostics</span>
         </div>
+        {runtimeInfo ? (
+          <div>
+            <DebugRow label="Core Path" value={runtimeInfo.binary_path || "Unavailable"} />
+            <DebugRow label="Runtime Config" value={runtimeInfo.config_path || "Unavailable"} />
+            <DebugRow label="Runtime Log" value={runtimeInfo.log_path || "Unavailable"} />
+            <DebugRow
+              label="Session"
+              value={`${runtimeInfo.running ? "Running" : "Stopped"}${runtimeInfo.pid ? ` | PID ${runtimeInfo.pid}` : ""}${runtimeInfo.tun_enabled ? " | TUN" : ""}`}
+              last
+            />
+          </div>
+        ) : (
+          <div className="px-5 py-4 text-[13px] text-muted">
+            Runtime diagnostics are unavailable until the desktop runtime responds.
+          </div>
+        )}
       </section>
+
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-muted/30 px-4 py-3">
+        <span className="text-[11px] text-muted">Quit restores the system proxy state and stops the bundled sing-box core.</span>
+        <button
+          onClick={() => invoke("quit_application")}
+          className="btn-secondary inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[12px]"
+        >
+          Exit Client
+        </button>
+      </div>
     </div>
   );
 }
 
-function AboutPill({ label, value }: { label: string; value: string }) {
+function DebugRow({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-surface-elevated/75 px-3 py-1.5 text-[11px] text-content-secondary">
-      <span className="uppercase tracking-[0.14em] text-content-muted">{label}</span>
-      <strong className="text-content">{value}</strong>
-    </span>
-  );
-}
-
-function DebugRow({
-  label,
-  value,
-  last = false,
-}: {
-  label: string;
-  value: string;
-  last?: boolean;
-}) {
-  return (
-    <div className={`px-3 py-2.5 ${last ? "" : "border-b border-border/60"}`}>
-      <p className="text-[10px] uppercase tracking-[0.14em] text-content-muted">{label}</p>
-      <p className="mt-1 break-all text-[12px] leading-5 text-content">{value}</p>
+    <div className={`px-5 py-3 ${last ? "" : "border-b border-border/60"}`}>
+      <p className="text-[10px] uppercase tracking-[0.14em] text-muted">{label}</p>
+      <p className="mt-1 break-all text-[12px] text-secondary">{value}</p>
     </div>
   );
 }

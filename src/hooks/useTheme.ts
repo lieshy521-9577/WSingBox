@@ -4,18 +4,12 @@ export type Theme = "light" | "dark";
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
-    // Read from localStorage or default to dark
     const saved = localStorage.getItem("singbox-theme") as Theme | null;
     return saved || "dark";
   });
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("singbox-theme", theme);
   }, [theme]);
 

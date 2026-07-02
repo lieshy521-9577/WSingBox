@@ -5,7 +5,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitleBar from "./components/TitleBar";
 import Sidebar from "./components/Sidebar";
 import NodeList from "./components/NodeList";
-import ProxyControl from "./components/ProxyControl";
 import LogViewer from "./components/LogViewer";
 import AddNodeModal from "./components/AddNodeModal";
 import ConfigOverviewPanel from "./components/ConfigOverviewPanel";
@@ -44,30 +43,20 @@ function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-
     const setupCloseHandler = async () => {
       unlisten = await getCurrentWindow().onCloseRequested((event) => {
         event.preventDefault();
         void hideToTray();
       });
     };
-
-    setupCloseHandler().catch((err) => {
-      console.error("Failed to register close handler:", err);
-    });
-
-    return () => {
-      unlisten?.();
-    };
+    setupCloseHandler().catch((err) => console.error("Failed to register close handler:", err));
+    return () => { unlisten?.(); };
   }, [hideToTray]);
 
   useEffect(() => {
     const dismissedAt = Number(localStorage.getItem(STARTUP_TIPS_DISMISSED_KEY) || "0");
     const withinQuietWindow = Number.isFinite(dismissedAt) && Date.now() - dismissedAt < STARTUP_TIPS_WINDOW_MS;
-
-    if (!withinQuietWindow) {
-      setShowStartupTips(true);
-    }
+    if (!withinQuietWindow) setShowStartupTips(true);
   }, []);
 
   useEffect(() => {
@@ -77,225 +66,120 @@ function App() {
   }, []);
 
   useEffect(() => {
-    getVersion()
-      .then((value) => setAppVersion(value))
-      .catch(() => setAppVersion("0.1.0"));
+    getVersion().then((value) => setAppVersion(value)).catch(() => setAppVersion("0.1.0"));
   }, []);
 
   const loadOverview = useCallback(async () => {
     try {
       const overview = await invoke<ConfigOverview | null>("get_config_overview");
-      if (overview) {
-        setConfigOverview(overview);
-      } else {
-        setConfigOverview(null);
-      }
-    } catch (err) {
-      console.error("Failed to load overview:", err);
-    }
+      if (overview) setConfigOverview(overview); else setConfigOverview(null);
+    } catch (err) { console.error("Failed to load overview:", err); }
   }, []);
 
-  // Load overview on mount and when the active saved profile changes
-  useEffect(() => {
-    loadOverview();
-  }, [loadOverview, singbox.activeConfigProfileId]);
+  useEffect(() => { loadOverview(); }, [loadOverview, singbox.activeConfigProfileId]);
 
-  const openImportProfileModal = useCallback(() => {
-    setShowImportProfileModal(true);
-  }, []);
+  const openImportProfileModal = useCallback(() => setShowImportProfileModal(true), []);
 
   const handleImportConfig = useCallback(async (filePath: string) => {
     try {
-      const result = await invoke<{
-        overview: ConfigOverview;
-        nodes: unknown[];
-        profiles: unknown[];
-        active_node: string;
-        active_outbound: string;
-      }>("import_config_file", { filePath });
-
+      const result = await invoke<{ overview: ConfigOverview; nodes: unknown[]; profiles: unknown[]; active_node: string; active_outbound: string }>("import_config_file", { filePath });
       setConfigOverview(result.overview);
       await singbox.onConfigImported(result.active_outbound || result.active_node);
       setCurrentPage("overview");
-    } catch (err) {
-      singbox.setError(String(err));
-    }
+    } catch (err) { singbox.setError(String(err)); }
   }, [singbox]);
 
   const handleImportConfigUrl = useCallback(async (value: string) => {
     try {
       const resolvedUrl = value.trim();
       if (!resolvedUrl) return;
-
-      const result = await invoke<{
-        overview: ConfigOverview;
-        nodes: unknown[];
-        profiles: unknown[];
-        active_node: string;
-        active_outbound: string;
-      }>("import_config_url", { url: resolvedUrl });
-
+      const result = await invoke<{ overview: ConfigOverview; nodes: unknown[]; profiles: unknown[]; active_node: string; active_outbound: string }>("import_config_url", { url: resolvedUrl });
       setConfigOverview(result.overview);
       await singbox.onConfigImported(result.active_outbound || result.active_node);
       setCurrentPage("overview");
-    } catch (err) {
-      singbox.setError(String(err));
-    }
+    } catch (err) { singbox.setError(String(err)); }
   }, [singbox]);
 
-  const handleValidateImportFile = useCallback(async (filePath: string) => {
-    return invoke<ImportValidationReport>("validate_import_file", { filePath });
-  }, []);
+  const handleValidateImportFile = useCallback(async (filePath: string) =>
+    invoke<ImportValidationReport>("validate_import_file", { filePath }), []);
+  const handleValidateImportUrl = useCallback(async (url: string) =>
+    invoke<ImportValidationReport>("validate_import_url", { url }), []);
 
-  const handleValidateImportUrl = useCallback(async (url: string) => {
-    return invoke<ImportValidationReport>("validate_import_url", { url });
-  }, []);
-
-  const handleEditRouteRule = useCallback((index: number, rule: RouteRuleInfo) => {
-    setEditingRouteRule({ index, rule });
-  }, []);
+  const handleEditRouteRule = useCallback((index: number, rule: RouteRuleInfo) => setEditingRouteRule({ index, rule }), []);
 
   const handleSaveRouteRule = useCallback(async (value: string) => {
-    if (!configOverview || !editingRouteRule) {
-      throw new Error("No route rule is selected");
-    }
-
+    if (!configOverview || !editingRouteRule) throw new Error("No route rule is selected");
     let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      throw new Error("Route rule must be valid JSON");
-    }
-
-    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
-      throw new Error("Route rule must be a JSON object");
-    }
-
-    const nextRules = configOverview.route_rules.map((rule, idx) =>
-      idx === editingRouteRule.index ? parsed : rule.raw
-    );
-
+    try { parsed = JSON.parse(value); } catch { throw new Error("Route rule must be valid JSON"); }
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Route rule must be a JSON object");
+    const nextRules = configOverview.route_rules.map((rule, idx) => idx === editingRouteRule.index ? parsed : rule.raw);
     await invoke("save_route_rules_json", { rules: nextRules });
     setEditingRouteRule(null);
     await loadOverview();
   }, [configOverview, editingRouteRule, loadOverview]);
 
   const handleDismissStartupTips = useCallback(() => {
-    if (suppressStartupTips) {
-      localStorage.setItem(STARTUP_TIPS_DISMISSED_KEY, String(Date.now()));
-    } else {
-      localStorage.removeItem(STARTUP_TIPS_DISMISSED_KEY);
-    }
+    if (suppressStartupTips) localStorage.setItem(STARTUP_TIPS_DISMISSED_KEY, String(Date.now()));
+    else localStorage.removeItem(STARTUP_TIPS_DISMISSED_KEY);
     setShowStartupTips(false);
   }, [suppressStartupTips]);
 
   const handleOpenConfigProfileEditor = useCallback(async (profileId: string) => {
     try {
       const profile = singbox.configProfiles.find((item) => item.id === profileId);
-      if (!profile) {
-        throw new Error("Profile not found");
-      }
-
+      if (!profile) throw new Error("Profile not found");
       const config = await invoke<Record<string, unknown>>("get_config_profile_json", { profileId });
-      setEditingConfigProfile({
-        id: profileId,
-        name: profile.name,
-        value: JSON.stringify(config, null, 2),
-      });
-    } catch (err) {
-      singbox.setError(String(err));
-    }
+      setEditingConfigProfile({ id: profileId, name: profile.name, value: JSON.stringify(config, null, 2) });
+    } catch (err) { singbox.setError(String(err)); }
   }, [singbox]);
 
   const handleSaveConfigProfile = useCallback(async (value: string) => {
-    if (!editingConfigProfile) {
-      throw new Error("No config profile selected");
-    }
-
+    if (!editingConfigProfile) throw new Error("No config profile selected");
     let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      throw new Error("Profile config must be valid JSON");
-    }
-
-    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
-      throw new Error("Profile config must be a JSON object");
-    }
-
-    await invoke("save_config_profile_json", {
-      profileId: editingConfigProfile.id,
-      config: parsed,
-    });
-
+    try { parsed = JSON.parse(value); } catch { throw new Error("Profile config must be valid JSON"); }
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Profile config must be a JSON object");
+    await invoke("save_config_profile_json", { profileId: editingConfigProfile.id, config: parsed });
     setEditingConfigProfile(null);
     await singbox.loadConfigProfiles();
-    if (singbox.activeConfigProfileId === editingConfigProfile.id) {
-      await loadOverview();
-      await singbox.onConfigImported("");
-    }
+    if (singbox.activeConfigProfileId === editingConfigProfile.id) { await loadOverview(); await singbox.onConfigImported(""); }
   }, [editingConfigProfile, loadOverview, singbox]);
 
   const handleCopySubscriptionUrl = useCallback(async (profileId: string) => {
     try {
       const profile = singbox.configProfiles.find((item) => item.id === profileId);
-      if (!profile || profile.source_kind !== "url") {
-        throw new Error("This profile does not have an exportable subscription URL");
-      }
-
+      if (!profile || profile.source_kind !== "url") throw new Error("This profile does not have an exportable subscription URL");
       await navigator.clipboard.writeText(profile.source_path);
       singbox.setError(null);
-    } catch (err) {
-      singbox.setError(String(err));
-    }
+    } catch (err) { singbox.setError(String(err)); }
   }, [singbox]);
 
   return (
-    <div className="h-screen overflow-hidden bg-surface-base p-[clamp(0.25rem,0.55vw,0.375rem)]">
-      <div className="panel-shell flex h-full flex-col overflow-hidden rounded-[22px]">
-        {/* Custom title bar */}
-        <TitleBar theme={theme} onToggleTheme={toggleTheme} onCloseToTray={() => void hideToTray()} />
+    <div className="flex flex-col h-screen p-2.5">
+      {/* Title bar */}
+      <TitleBar theme={theme} onToggleTheme={toggleTheme} onCloseToTray={() => void hideToTray()} />
 
-        <div className="flex flex-1 overflow-hidden p-[clamp(0.375rem,0.8vw,0.5rem)]">
-        {/* Sidebar navigation */}
+      <div className="flex flex-1 gap-2.5 min-h-0">
+        {/* Sidebar */}
         <Sidebar
           currentPage={currentPage}
           onPageChange={setCurrentPage}
           isRunning={singbox.isRunning}
           runtimePhase={singbox.runtimePhase}
+          onToggleProxy={() => void singbox.toggleProxy()}
           onImportProfile={openImportProfileModal}
           configProfiles={singbox.configProfiles}
           activeConfigProfileId={singbox.activeConfigProfileId}
-          onSwitchConfigProfile={singbox.switchConfigProfile}
-          onRefreshConfigProfile={(profileId) => void singbox.refreshConfigProfile(profileId)}
-          onCopySubscriptionUrl={(profileId) => void handleCopySubscriptionUrl(profileId)}
+          onSwitchConfigProfile={(id) => void singbox.switchConfigProfile(id)}
+          onEditConfigProfile={(id) => void handleOpenConfigProfileEditor(id)}
           onDeleteConfigProfile={singbox.deleteConfigProfile}
-          onEditConfigProfile={(profileId) => void handleOpenConfigProfileEditor(profileId)}
+          onRefreshConfigProfile={(id) => void singbox.refreshConfigProfile(id)}
+          onCopySubscriptionUrl={(id) => void handleCopySubscriptionUrl(id)}
         />
 
-        {/* Main content */}
-        <main className="workspace-shell ml-[clamp(0.375rem,0.8vw,0.5rem)] flex flex-1 flex-col overflow-hidden rounded-[22px] border border-border/70">
-          {/* Proxy control bar */}
-          <ProxyControl
-            isRunning={singbox.isRunning}
-            runtimePhase={singbox.runtimePhase}
-            proxyEnabled={singbox.proxyEnabled}
-            loading={singbox.loading}
-            switchStatus={singbox.switchStatus}
-            selectedOutboundTag={singbox.selectedOutboundTag}
-            nodes={singbox.nodes}
-            profiles={singbox.profiles}
-            runtimeDebug={singbox.runtimeDebug}
-            startupHealth={singbox.startupHealth}
-            hasConfig={singbox.hasConfig}
-            tunEnabled={configOverview?.inbounds.some((inbound) => inbound.inbound_type === "tun") ?? false}
-            onToggle={singbox.toggleProxy}
-            error={singbox.error}
-            onDismissError={() => singbox.setError(null)}
-          />
-
+        {/* Workspace */}
+        <main className="flex flex-1 min-w-0 flex-col overflow-hidden rounded-[22px] border border-border bg-surface/60">
           {/* Page content */}
-          <div className="app-scroll flex-1 overflow-auto px-[clamp(0.75rem,1.4vw,1rem)] pb-[clamp(0.75rem,1.4vw,1rem)] pt-[clamp(0.625rem,1.2vw,0.75rem)]">
+          <div className="flex-1 overflow-auto p-[18px]">
             {currentPage === "overview" && (
               configOverview ? (
                 <div className="page-entrance">
@@ -307,15 +191,15 @@ function App() {
                 </div>
               ) : (
                 <div className="page-entrance flex h-full items-center justify-center">
-                  <div className="panel-card w-full max-w-lg rounded-[24px] p-5 text-center">
+                  <div className="rounded-2xl border border-border bg-muted/30 p-8 text-center max-w-md w-full">
                     <p className="section-label mb-2">Ready to configure</p>
-                    <h2 className="text-[1.35rem] font-semibold tracking-tight text-content">No configuration loaded</h2>
-                    <p className="mx-auto mt-2 max-w-md text-[13px] leading-5 text-content-secondary">
+                    <h2 className="text-[1.35rem] font-semibold text-primary">No configuration loaded</h2>
+                    <p className="mx-auto mt-2 max-w-md text-[13px] text-secondary">
                       Import a profile to inspect routes, manage nodes, and control sing-box from one workspace.
                     </p>
                     <button
                       onClick={openImportProfileModal}
-                      className="mt-4 rounded-2xl bg-primary-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                      className="mt-4 rounded-2xl bg-primary-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
                     >
                       Import Profile
                     </button>
@@ -340,23 +224,14 @@ function App() {
               />
             )}
             {currentPage === "logs" && <LogViewer />}
-            {currentPage === "settings" && (
-              <SettingsPanel onSaved={loadOverview} />
-            )}
+            {currentPage === "settings" && <SettingsPanel onSaved={loadOverview} />}
             {currentPage === "about" && <AboutPanel />}
           </div>
         </main>
       </div>
-      </div>
 
-      {/* Add node modal */}
-      {showAddNode && (
-        <AddNodeModal
-          onClose={() => setShowAddNode(false)}
-          onSubmit={singbox.addNode}
-        />
-      )}
-
+      {/* Modals */}
+      {showAddNode && <AddNodeModal onClose={() => setShowAddNode(false)} onSubmit={singbox.addNode} />}
       {editingNode && (
         <AddNodeModal
           onClose={() => setEditingNode(null)}
@@ -366,7 +241,6 @@ function App() {
           }
         />
       )}
-
       {editingRouteRule && (
         <RouteRuleModal
           open={!!editingRouteRule}
@@ -376,19 +250,17 @@ function App() {
           onSave={handleSaveRouteRule}
         />
       )}
-
       {editingConfigProfile && (
         <RouteRuleModal
           open={!!editingConfigProfile}
           title={`Edit Profile JSON: ${editingConfigProfile.name}`}
-          description="Edit the full saved sing-box profile JSON. Invalid JSON will be rejected before save."
+          description="Edit the full saved sing-box profile JSON."
           initialValue={editingConfigProfile.value}
           saveLabel="Save Profile"
           onClose={() => setEditingConfigProfile(null)}
           onSave={handleSaveConfigProfile}
         />
       )}
-
       {showStartupTips && (
         <StartupTipsModal
           appVersion={appVersion}
@@ -398,7 +270,6 @@ function App() {
           onClose={handleDismissStartupTips}
         />
       )}
-
       <ImportProfileModal
         open={showImportProfileModal}
         onClose={() => setShowImportProfileModal(false)}

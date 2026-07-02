@@ -1,4 +1,4 @@
-import { Minus, Square, X, Sun, Moon, Package2 } from "lucide-react";
+import { Minus, Square, X, Sun, Moon } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Theme } from "../hooks/useTheme";
 
@@ -10,46 +10,42 @@ interface TitleBarProps {
 
 function TitleBar({ theme, onToggleTheme, onCloseToTray }: TitleBarProps) {
   return (
-    <div className="flex h-11 items-center justify-between border-b border-border/80 bg-titlebar px-3">
-      <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-xl border border-sky-500/15 bg-sky-500/12 text-sky-600 shadow-sm shadow-sky-500/10 dark:text-sky-300">
-            <Package2 size={14} strokeWidth={2.2} />
+    <div className="flex h-[42px] items-center justify-between rounded-2xl border border-border bg-gradient-to-b from-surface/98 to-surface-elevated/96 px-3.5 mb-2.5">
+      <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-500/12">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-primary-500">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+            </svg>
           </div>
           <div>
-            <p className="text-sm font-semibold text-content">SingBox Client</p>
-            <p className="text-[11px] text-content-secondary">Desktop proxy control center</p>
+            <p className="text-[13px] font-semibold text-primary">SingBox Client</p>
           </div>
         </div>
       </div>
-      <div className="ml-3 flex items-center gap-1">
-        {/* Theme toggle */}
+      <div className="flex items-center gap-1">
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-muted transition-colors hover:bg-muted/50 hover:text-primary"
           onClick={onToggleTheme}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
-          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+          {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
         </button>
-        <div className="mx-1 h-4 w-px bg-border" />
+        <div className="mx-1 h-4 w-px bg-border/60" />
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-secondary transition-colors hover:bg-surface-elevated"
-          onClick={() => {
-            void getCurrentWindow().minimize();
-          }}
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-secondary transition-colors hover:bg-muted/50"
+          onClick={() => { void getCurrentWindow().minimize(); }}
         >
           <Minus size={14} />
         </button>
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-secondary transition-colors hover:bg-surface-elevated"
-          onClick={() => {
-            void getCurrentWindow().toggleMaximize();
-          }}
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-secondary transition-colors hover:bg-muted/50"
+          onClick={() => { void getCurrentWindow().toggleMaximize(); }}
         >
           <Square size={11} />
         </button>
         <button
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-content-secondary transition-colors hover:bg-red-600 hover:text-white"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-secondary transition-colors hover:bg-error/80 hover:text-white"
           onClick={onCloseToTray}
         >
           <X size={14} />

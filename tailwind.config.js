@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
-  darkMode: "class",
+  darkMode: ["selector", "[data-theme='dark']"],
   theme: {
     extend: {
       colors: {
@@ -17,30 +17,29 @@ export default {
           800: "#1e40af",
           900: "#1e3a8a",
         },
+        success: "#10b981",
+        warning: "#f59e0b",
+        error: "#ef4444",
+        info: "#3b82f6",
         // Semantic colors mapped to CSS variables
         surface: {
-          base: "rgb(var(--color-bg-base) / <alpha-value>)",
-          DEFAULT: "rgb(var(--color-bg-surface) / <alpha-value>)",
-          elevated: "rgb(var(--color-bg-elevated) / <alpha-value>)",
-          muted: "rgb(var(--color-bg-muted) / <alpha-value>)",
-          subtle: "rgb(var(--color-bg-subtle) / <alpha-value>)",
+          base: "rgb(var(--bg-base) / <alpha-value>)",
+          DEFAULT: "rgb(var(--bg-surface) / <alpha-value>)",
+          elevated: "rgb(var(--bg-elevated) / <alpha-value>)",
+          muted: "rgb(var(--bg-muted) / <alpha-value>)",
+          subtle: "rgb(var(--bg-subtle) / <alpha-value>)",
         },
         border: {
-          DEFAULT: "rgb(var(--color-border) / <alpha-value>)",
-          muted: "rgb(var(--color-border-muted) / <alpha-value>)",
+          DEFAULT: "rgb(var(--border) / <alpha-value>)",
+          muted: "rgb(var(--border-muted) / <alpha-value>)",
         },
         content: {
-          DEFAULT: "rgb(var(--color-text-primary) / <alpha-value>)",
-          secondary: "rgb(var(--color-text-secondary) / <alpha-value>)",
-          muted: "rgb(var(--color-text-muted) / <alpha-value>)",
-          inverse: "rgb(var(--color-text-inverse) / <alpha-value>)",
+          DEFAULT: "rgb(var(--text-primary) / <alpha-value>)",
+          secondary: "rgb(var(--text-secondary) / <alpha-value>)",
+          muted: "rgb(var(--text-muted) / <alpha-value>)",
+          inverse: "rgb(var(--text-inverse) / <alpha-value>)",
         },
-        titlebar: "rgb(var(--color-titlebar) / <alpha-value>)",
         sidebar: "rgb(var(--color-sidebar) / <alpha-value>)",
-        card: {
-          DEFAULT: "rgb(var(--color-card) / <alpha-value>)",
-          hover: "rgb(var(--color-card-hover) / <alpha-value>)",
-        },
       },
     },
   },
