@@ -395,8 +395,9 @@ function NodeDetailPanel({
     ? (node.settings as Record<string, unknown>)
     : {};
 
-  const transport = settings.transport as string | undefined;
-  const host = settings.host || settings.sni || settings.server_name || undefined;
+  const transport = settings.transport != null ? String(settings.transport) : undefined;
+  const hostRaw = settings.host || settings.sni || settings.server_name;
+  const host = hostRaw != null ? String(hostRaw) : undefined;
 
   const latencyMs = latency?.status === "ok" ? latency.latency_ms : null;
   let latencyBarPct = 0;

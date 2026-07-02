@@ -41,8 +41,6 @@ function ConfigOverviewPanel({
   const primaryInbound = overview.inbounds[0] ?? null;
   const activeOutbound = overview.outbounds.find((item) => item.tag === selectedOutboundTag) ?? null;
   const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
-  const dnsLocalCount = overview.dns_servers.filter((server) => server.dns_type === "local").length;
-  const dnsRemoteCount = overview.dns_servers.length - dnsLocalCount;
 
   const sectionTabs: Array<{
     id: OverviewSection;
@@ -50,21 +48,23 @@ function ConfigOverviewPanel({
     icon: React.ReactNode;
     count: string;
   }> = [
-    { id: "nodes", label: "Nodes", icon: <Network size={13} />, count: `${proxyNodes.length}` },
-    { id: "dns", label: "DNS", icon: <Globe size={13} />, count: `${overview.dns_servers.length}` },
-    { id: "rules", label: "Rules", icon: <Route size={13} />, count: `${overview.route_rules_count}` },
-    { id: "ruleSets", label: "Rule Sets", icon: <FileJson size={13} />, count: `${overview.rule_sets.length}` },
+    { id: "nodes", label: "Nodes", icon: <Network size={16} />, count: `${proxyNodes.length}` },
+    { id: "dns", label: "DNS", icon: <Globe size={16} />, count: `${overview.dns_servers.length}` },
+    { id: "rules", label: "Rules", icon: <Route size={16} />, count: `${overview.route_rules_count}` },
+    { id: "ruleSets", label: "Rule Sets", icon: <FileJson size={16} />, count: `${overview.rule_sets.length}` },
   ];
 
   return (
     <section className="space-y-[18px]">
       {/* ── Hero Connection Card ── */}
       <div className="flex flex-col items-center rounded-[20px] border border-border bg-gradient-to-br from-surface/70 to-surface-elevated/60 px-6 pb-5 pt-7 text-center">
-        <div className={`mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-lg transition-all ${
-          isRunning
-            ? "bg-emerald-500/20 text-emerald-400 shadow-emerald-500/20"
-            : "bg-muted text-muted-foreground shadow-transparent"
-        }`}>
+        <div
+          className={`mb-4 flex h-[72px] w-[72px] items-center justify-center rounded-[24px] shadow-lg transition-all ${
+            isRunning
+              ? "bg-emerald-500/20 text-emerald-400 shadow-emerald-500/20"
+              : "bg-muted text-muted-foreground shadow-transparent"
+          }`}
+        >
           <Shield size={36} strokeWidth={2} />
         </div>
 
@@ -131,12 +131,10 @@ function ConfigOverviewPanel({
       </div>
 
       {/* ── Section Tabs ── */}
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div className="max-w-2xl">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-muted">Configuration Overview</p>
-          <h2 className="text-[1.2rem] font-semibold tracking-tight text-content">
-            Runtime snapshot
-          </h2>
+          <h2 className="text-[1.2rem] font-semibold tracking-tight text-content">Runtime snapshot</h2>
         </div>
         <div className="flex flex-wrap gap-2">
           {sectionTabs.map((tab) => {
@@ -146,14 +144,22 @@ function ConfigOverviewPanel({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveSection(tab.id)}
-                className={`overview-subtab ${active ? "active" : ""}`}
+                className={`group inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition-all ${
+                  active
+                    ? "border-primary-500/30 bg-primary-500/10 text-primary-500 shadow-sm"
+                    : "border-border/70 bg-surface/60 text-content-secondary hover:border-primary-500/25 hover:bg-primary-500/5 hover:text-content"
+                }`}
                 aria-pressed={active}
               >
-                <span className="flex items-center gap-1.5">
+                <span className={active ? "text-primary-500" : "text-content-muted group-hover:text-primary-500"}>
                   {tab.icon}
-                  <span>{tab.label}</span>
                 </span>
-                <span className="rounded-full bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">
+                <span>{tab.label}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
+                    active ? "bg-primary-500/20 text-primary-500" : "bg-surface-elevated text-content-muted"
+                  }`}
+                >
                   {tab.count}
                 </span>
               </button>
@@ -163,7 +169,8 @@ function ConfigOverviewPanel({
       </div>
 
       {/* ── Overview Grid ── */}
-      <div className="grid grid-cols-1 gap-[18px] xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-[18px] xl:grid-cols-2">
+        {/* Left column: section-specific list */}
         <div className="min-w-0">
           {activeSection === "nodes" && (
             <OverviewCard
@@ -221,8 +228,8 @@ function ConfigOverviewPanel({
           )}
         </div>
 
-        {/* Middle column: proxy nodes summary */}
-        {activeSection === "nodes" && (
+        {/* Right column: proxy nodes (only in nodes view) or secondary info */}
+        {activeSection === "nodes" ? (
           <div className="min-w-0">
             <OverviewCard
               title="Proxy Nodes"
@@ -237,24 +244,17 @@ function ConfigOverviewPanel({
               }))}
             />
           </div>
-        )}
-
-        {/* Right column: status / info */}
-        <div className="min-w-0">
-          <div className="rounded-[18px] border border-border/70 bg-surface/60 p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h4 className="text-sm font-semibold text-content">Status</h4>
-            </div>
-            <div className="space-y-3">
-              <Kv label="Connection" value={isRunning ? "Running" : "Stopped"} />
-              <Kv label="Selected Route" value={activeOutbound?.tag ?? "None"} />
-              <Kv label="Inbound Type" value={primaryInbound?.inbound_type ?? "Unknown"} />
-              <Kv label="Listen Address" value={primaryInbound ? `${primaryInbound.tag}` : "Not set"} />
-              <Kv label="DNS Servers" value={`${overview.dns_servers.length}`} />
-              <Kv label="DNS Strategy" value={`${dnsLocalCount} local / ${dnsRemoteCount} remote`} />
+        ) : (
+          <div className="hidden min-w-0 xl:flex xl:items-center xl:justify-center">
+            <div className="rounded-[18px] border border-border/60 bg-surface/40 px-6 py-8 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-500/10 text-primary-500">
+                <Network size={22} />
+              </div>
+              <p className="text-sm font-medium text-content">Switch to Nodes</p>
+              <p className="mt-1 text-xs text-content-secondary">to see paired proxy nodes and groups</p>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </section>
   );
@@ -274,7 +274,7 @@ function SnapshotTile({
   meta: string;
 }) {
   return (
-    <div className="flex items-center gap-[14px] rounded-[14px] border border-border-muted bg-muted/35 px-4 py-4 transition-all hover:bg-muted/55 hover:-translate-y-[1px]">
+    <div className="flex items-center gap-[14px] rounded-[14px] border border-border-muted bg-muted/35 px-4 py-4 transition-all hover:-translate-y-[1px] hover:bg-muted/55">
       <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl bg-primary-500/12 text-primary-500">
         {icon}
       </span>
@@ -339,7 +339,10 @@ function OverviewCard({
             {item.editable && item.onEdit && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); item.onEdit?.(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  item.onEdit?.();
+                }}
                 className="mt-0.5 shrink-0 rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content"
               >
                 <Pencil size={14} />
@@ -348,15 +351,6 @@ function OverviewCard({
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function Kv({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-content-muted">{label}</p>
-      <p className="mt-1 text-sm font-medium text-content">{value}</p>
     </div>
   );
 }
