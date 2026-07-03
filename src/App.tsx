@@ -207,6 +207,9 @@ function App() {
           onDeleteConfigProfile={singbox.deleteConfigProfile}
           onRefreshConfigProfile={(id) => void handleRefreshConfigProfile(id)}
           onExportProfile={(id) => void handleExportProfile(id)}
+          isElevated={singbox.isElevated}
+          needsElevation={singbox.tunNeedsElevation}
+          requestElevation={singbox.requestElevation}
         />
 
         {/* Workspace */}
@@ -263,7 +266,14 @@ function App() {
               />
             )}
             {currentPage === "logs" && <LogViewer />}
-            {currentPage === "settings" && <SettingsPanel onSaved={loadOverview} />}
+            {currentPage === "settings" && (
+              <SettingsPanel
+                onSaved={async () => {
+                  await loadOverview();
+                  await singbox.loadStartupHealth();
+                }}
+              />
+            )}
             {currentPage === "about" && <AboutPanel />}
           </div>
         </main>

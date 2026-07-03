@@ -29,6 +29,15 @@ struct CoreEventPayload {
     message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeReconcileSnapshot {
+    pub running: bool,
+    pub proxy_enabled: bool,
+    pub adopted_existing_runtime: bool,
+    pub cleared_stale_state: bool,
+    pub message: String,
+}
+
 /// Start sing-box core process with elevation (admin privileges for TUN)
 #[tauri::command]
 pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
@@ -60,13 +69,14 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     let _ = fs::remove_file(&bootstrap_config_path);
 
     let singbox_path = core_process::find_singbox_binary_with_app(&app_handle)?;
-
-    core_process::hidden_command("taskkill")
-        .args(["/F", "/IM", "sing-box.exe"])
-        .output()
-        .ok();
-
-    thread::sleep(Duration::from_millis(500));
+    if core_process::load_core_state().ok().flatten().is_some()
+        || core_process::is_singbox_running().unwrap_or(false)
+    {
+        let _ = core_process::stop_singbox_process();
+        thread::sleep(Duration::from_millis(400));
+    }
+    core_process::clear_core_state().ok();
+    core_process::clear_core_pid().ok();
 
     clear_runtime_log_file().ok();
 
@@ -101,7 +111,10 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
                 &bootstrap_config_path.to_string_lossy(),
             )?;
             if removed_rule_sets > 0 {
-                core_process::stop_singbox_process().ok();
+                // launch_singbox_with_config now includes "kill old + start new"
+                // in a single elevated script — no separate stop needed, only 1 UAC
+                core_process::clear_core_state().ok();
+                core_process::clear_core_pid().ok();
                 clear_runtime_log_file().ok();
                 launch_singbox_with_config(
                     &singbox_path,
@@ -120,7 +133,8 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
                 &bootstrap_config_path.to_string_lossy(),
             )?;
             if removed_rule_sets > 0 && details.to_ascii_lowercase().contains("rule-set") {
-                core_process::stop_singbox_process().ok();
+                core_process::clear_core_state().ok();
+                core_process::clear_core_pid().ok();
                 clear_runtime_log_file().ok();
                 launch_singbox_with_config(
                     &singbox_path,
@@ -292,7 +306,97 @@ fn stop_singbox_process() -> Result<(), String> {
 /// Check if sing-box is currently running
 #[tauri::command]
 pub async fn get_singbox_status() -> Result<bool, String> {
-    core_process::is_singbox_running()
+    if core_process::is_singbox_running()? {
+        return Ok(true);
+    }
+
+    if let Some(state) = core_process::load_core_state().ok().flatten() {
+        if let Ok((host, port)) = get_mixed_inbound_endpoint(&state.config_path) {
+            if TcpStream::connect_timeout(
+                &format!("{}:{}", host, port)
+                    .parse()
+                    .map_err(|e| format!("Invalid mixed inbound endpoint: {}", e))?,
+                Duration::from_millis(350),
+            )
+            .is_ok()
+            {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+#[tauri::command]
+pub async fn reconcile_runtime_state(
+    app_handle: tauri::AppHandle,
+) -> Result<RuntimeReconcileSnapshot, String> {
+    let running = get_singbox_status().await?;
+    let proxy_enabled = crate::commands::proxy::get_proxy_status()
+        .await
+        .unwrap_or(false);
+
+    if running {
+        let _ = apply_tray_icon(&app_handle, true);
+        return Ok(RuntimeReconcileSnapshot {
+            running: true,
+            proxy_enabled,
+            adopted_existing_runtime: true,
+            cleared_stale_state: false,
+            message: "Adopted existing sing-box runtime".to_string(),
+        });
+    }
+
+    let had_state = core_process::load_core_state().ok().flatten().is_some()
+        || app_paths::core_pid_path().exists();
+
+    if had_state {
+        core_process::clear_core_state().ok();
+        core_process::clear_core_pid().ok();
+    }
+
+    let _ = apply_tray_icon(&app_handle, false);
+
+    Ok(RuntimeReconcileSnapshot {
+        running: false,
+        proxy_enabled,
+        adopted_existing_runtime: false,
+        cleared_stale_state: had_state,
+        message: if had_state {
+            "Cleared stale sing-box runtime state".to_string()
+        } else {
+            "No active sing-box runtime detected".to_string()
+        },
+    })
+}
+
+/// Check if the app is running with elevated (admin) privileges
+#[tauri::command]
+pub async fn is_elevated() -> Result<bool, String> {
+    Ok(core_process::is_elevated())
+}
+
+/// Request the app to restart with admin elevation (triggers UAC prompt once).
+/// Before calling this, the frontend should save its state and call
+/// save_elevation_intent so the restarted app auto-connects.
+#[tauri::command]
+pub async fn request_elevation(app_handle: tauri::AppHandle) -> Result<(), String> {
+    core_process::save_elevation_intent()?;
+    if let Err(err) = core_process::restart_as_admin() {
+        let _ = std::fs::remove_file(crate::app_paths::app_data_dir().join("elevation-intent.json"));
+        return Err(err);
+    }
+    // Exit the current (non-elevated) instance after spawning the elevated one
+    app_handle.exit(0);
+    Ok(())
+}
+
+/// Check if there's a pending elevation intent (auto-connect after admin restart).
+/// Frontend calls this on startup; if true, it should auto-start the proxy.
+#[tauri::command]
+pub async fn check_elevation_intent() -> Result<bool, String> {
+    Ok(core_process::load_elevation_intent())
 }
 
 #[tauri::command]

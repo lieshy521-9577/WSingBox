@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Network, ScrollText, LayoutDashboard, FileUp, Settings, Info, ChevronUp, Pencil, Download, FolderOpen, Loader2, RefreshCw } from "lucide-react";
+import { Network, ScrollText, LayoutDashboard, FileUp, Settings, Info, ChevronUp, Pencil, Download, FolderOpen, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
 import { ConfigProfile } from "../types";
 import { RuntimePhase } from "../hooks/useSingbox";
 
@@ -20,6 +20,9 @@ interface SidebarProps {
   onDeleteConfigProfile: (profileId: string) => void;
   onRefreshConfigProfile: (profileId: string) => void;
   onExportProfile: (profileId: string) => void;
+  isElevated: boolean | null;
+  needsElevation: boolean;
+  requestElevation: () => void;
 }
 
 function Sidebar({
@@ -37,6 +40,9 @@ function Sidebar({
   onDeleteConfigProfile: _onDeleteConfigProfile,
   onRefreshConfigProfile,
   onExportProfile,
+  isElevated,
+  needsElevation,
+  requestElevation,
 }: SidebarProps) {
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -61,7 +67,7 @@ function Sidebar({
     { id: "about" as Page, label: "About", icon: Info },
   ];
 
-  const sessionState = getSessionState(runtimePhase, isRunning, loading);
+  const sessionState = getSessionState(runtimePhase, isRunning, loading, needsElevation);
   const activeProfile = configProfiles.find((p) => p.id === activeConfigProfileId);
 
   return (
@@ -102,6 +108,27 @@ function Sidebar({
           </div>
         </div>
       </div>
+
+      {/* ======== Elevation hint ======== */}
+      {needsElevation && isElevated === false && (
+        <div className="shrink-0 px-1.5 pt-1">
+          <button
+            onClick={requestElevation}
+            className="w-full flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-50/60 dark:bg-amber-500/10 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/15 transition-colors cursor-pointer"
+          >
+            <ShieldAlert size={14} className="shrink-0" />
+            <span className="min-w-0">TUN profile requires administrator access</span>
+          </button>
+        </div>
+      )}
+      {isElevated === true && (
+        <div className="shrink-0 px-1.5 pt-1">
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-50/40 dark:bg-emerald-500/8 px-3 py-2 text-[12px] text-emerald-700 dark:text-emerald-300">
+            <ShieldAlert size={14} className="shrink-0" />
+            <span className="min-w-0">Running as admin — no UAC needed</span>
+          </div>
+        </div>
+      )}
 
       {/* ======== Workspace Nav ======== */}
       <nav className="flex-1 min-h-0 flex flex-col overflow-hidden px-1.5">
@@ -225,7 +252,12 @@ function Sidebar({
   );
 }
 
-function getSessionState(runtimePhase: RuntimePhase, isRunning: boolean, loading: boolean) {
+function getSessionState(
+  runtimePhase: RuntimePhase,
+  isRunning: boolean,
+  loading: boolean,
+  needsElevation: boolean
+) {
   if (loading) {
     return {
       label: isRunning ? "Stopping" : "Starting",
@@ -277,6 +309,16 @@ function getSessionState(runtimePhase: RuntimePhase, isRunning: boolean, loading
     };
   }
   if (runtimePhase === "error") {
+    if (needsElevation) {
+      return {
+        label: "Needs Admin",
+        helper: "Restart the app as administrator for this TUN profile",
+        pillLabel: "UAC",
+        pillClass: "warning",
+        dotClass: "warning-dot",
+        engineLabel: "Elevate",
+      };
+    }
     return {
       label: "Failed",
       helper: "Runtime did not become ready",
@@ -284,6 +326,16 @@ function getSessionState(runtimePhase: RuntimePhase, isRunning: boolean, loading
       pillClass: "error",
       dotClass: "error-dot",
       engineLabel: "Failed",
+    };
+  }
+  if (needsElevation) {
+    return {
+      label: "Needs Admin",
+      helper: "TUN profile needs administrator restart before connecting",
+      pillLabel: "UAC",
+      pillClass: "warning",
+      dotClass: "warning-dot",
+      engineLabel: "Elevate",
     };
   }
   return {
