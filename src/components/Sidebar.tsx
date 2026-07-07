@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Network, ScrollText, LayoutDashboard, FileUp, Settings, Info, ChevronUp, Pencil, Download, FolderOpen, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import { Network, ScrollText, LayoutDashboard, FileUp, Settings, Info, ChevronUp, Pencil, Download, FolderOpen, Loader2, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { ConfigProfile } from "../types";
 import { RuntimePhase } from "../hooks/useSingbox";
 
@@ -37,7 +37,7 @@ function Sidebar({
   activeConfigProfileId,
   onSwitchConfigProfile,
   onEditConfigProfile,
-  onDeleteConfigProfile: _onDeleteConfigProfile,
+  onDeleteConfigProfile,
   onRefreshConfigProfile,
   onExportProfile,
   isElevated,
@@ -238,6 +238,18 @@ function Sidebar({
                           title={profile.source_kind === "url" ? "Copy subscription URL" : "Copy profile JSON"}
                         >
                           <Download size={11} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const confirmed = window.confirm(`Delete saved profile "${profile.name}"?`);
+                            if (!confirmed) return;
+                            void onDeleteConfigProfile(profile.id);
+                          }}
+                          className="rounded-lg p-1.5 text-content-muted transition-colors hover:bg-rose-500/10 hover:text-rose-500"
+                          title="Delete profile"
+                        >
+                          <Trash2 size={11} />
                         </button>
                       </div>
                     </button>
