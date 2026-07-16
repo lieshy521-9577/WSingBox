@@ -16,8 +16,16 @@ pub fn runtime_bootstrap_config_path() -> PathBuf {
     app_data_dir().join("config.bootstrap.json")
 }
 
+pub fn runtime_launch_config_path() -> PathBuf {
+    app_data_dir().join("config.launch.json")
+}
+
 pub fn runtime_log_path() -> PathBuf {
     app_data_dir().join("singbox-runtime.log")
+}
+
+pub fn runtime_cache_path() -> PathBuf {
+    app_data_dir().join("cache.db")
 }
 
 pub fn proxy_state_path() -> PathBuf {

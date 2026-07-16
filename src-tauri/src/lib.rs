@@ -46,6 +46,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(latency::LatencyManager::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let icon = Image::from_bytes(APP_ICON)?;
@@ -120,11 +121,15 @@ pub fn run() {
             singbox_cmd::start_singbox,
             singbox_cmd::stop_singbox,
             singbox_cmd::get_singbox_status,
+            singbox_cmd::reconcile_runtime_state,
             singbox_cmd::quit_application,
             singbox_cmd::hide_main_window,
             singbox_cmd::get_runtime_logs,
             singbox_cmd::clear_runtime_logs,
             singbox_cmd::set_tray_connection_state,
+            singbox_cmd::is_elevated,
+            singbox_cmd::request_elevation,
+            singbox_cmd::check_elevation_intent,
             // system proxy management
             proxy::set_system_proxy,
             proxy::clear_system_proxy,
@@ -159,6 +164,7 @@ pub fn run() {
             config::save_route_rules_json,
             config::sync_active_profile_to_runtime,
             config::set_active_outbound,
+            config::switch_runtime_outbound,
             config::remove_group,
             config::switch_config_profile,
             config::refresh_config_profile,
@@ -167,8 +173,9 @@ pub fn run() {
             config::save_config_profile_json,
             config::get_startup_health_report,
             // latency testing
-            latency::test_node_latency,
-            latency::test_all_latency,
+            latency::start_latency_test,
+            latency::cancel_latency_test,
+            latency::test_node_connectivity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

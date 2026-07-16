@@ -85,7 +85,7 @@ npm run package:portable
 3. Distribute the generated zip:
 
 ```text
-src-tauri/target/release/bundle/portable/SingBox-Client_1.1.0_x64-portable.zip
+src-tauri/target/release/bundle/portable/SingBox-Client_1.3.1_x64-portable.zip
 ```
 
 4. On the target machine, unzip it and run:

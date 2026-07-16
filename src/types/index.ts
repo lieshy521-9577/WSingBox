@@ -73,6 +73,10 @@ export interface AppSettings {
   dns_final: string;
   dns_strategy: string;
   dns_servers: Record<string, unknown>[];
+  latency_test_url: string;
+  latency_timeout_ms: number;
+  latency_concurrency: number;
+  latency_auto_test: boolean;
 }
 
 export interface ConfigProfile {

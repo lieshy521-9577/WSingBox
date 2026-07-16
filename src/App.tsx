@@ -223,6 +223,7 @@ function App() {
                     overview={configOverview}
                     onEditRouteRule={handleEditRouteRule}
                     selectedOutboundTag={singbox.selectedOutboundTag}
+                    pendingOutboundTag={singbox.pendingOutboundTag}
                     onSelectOutbound={(tag) => void singbox.setSelectedOutboundTag(tag)}
                     runtimeDebug={singbox.runtimeDebug}
                     isRunning={singbox.isRunning}
@@ -254,10 +255,12 @@ function App() {
                 nodes={singbox.nodes}
                 profiles={singbox.profiles}
                 selectedOutboundTag={singbox.selectedOutboundTag}
+                pendingOutboundTag={singbox.pendingOutboundTag}
                 runtimeDebug={singbox.runtimeDebug}
                 runtimePhase={singbox.runtimePhase}
                 isRunning={singbox.isRunning}
                 hasConfig={singbox.hasConfig}
+                activeConfigProfileId={singbox.activeConfigProfileId}
                 onSelect={singbox.setSelectedOutboundTag}
                 onRemove={singbox.removeNode}
                 onRemoveGroup={singbox.removeGroup}

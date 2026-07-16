@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { startTransition, useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   Plus,
   Trash2,
@@ -10,28 +11,65 @@ import {
   ChevronDown,
   ChevronRight,
   Pencil,
-  Zap,
-  Globe,
   X,
   Loader2,
 } from "lucide-react";
-import { ProxyNode, PROTOCOL_LABELS, ProtocolType } from "../types";
+import { AppSettings, ProxyNode, PROTOCOL_LABELS, ProtocolType } from "../types";
 import { Profile, RuntimeDebugSnapshot, RuntimePhase } from "../hooks/useSingbox";
 
 interface LatencyResult {
-  node_id: string;
-  latency_ms: number;
+  profileId: string;
+  nodeId: string;
+  delayMs: number;
+  samplesMs: number[];
+  jitterMs: number | null;
   status: string;
+  errorKind: string | null;
+  testedAt: number;
+  endpoint: string;
+  source: "runtime" | "probe";
+  configFingerprint: string;
+  stage: "quick" | "confirmed";
+  sampleCount: number;
+  sampleTarget: number;
+  final: boolean;
+}
+
+type LatencyTestMode = "quick_auto" | "accurate";
+
+interface LatencyBatchSnapshot {
+  runId: string;
+  profileId: string;
+  state: "idle" | "running" | "completed" | "cancelled";
+  completed: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: LatencyResult[];
+  stage: "quick" | "confirmed" | "completed";
+}
+
+interface LatencyTestProgress extends Omit<LatencyBatchSnapshot, "results"> {
+  result: LatencyResult | null;
+}
+
+interface ConnectivityResult {
+  nodeId: string;
+  connectMs: number;
+  status: string;
+  errorKind: string | null;
 }
 
 interface NodeListProps {
   nodes: ProxyNode[];
   profiles: Profile[];
   selectedOutboundTag: string | null;
+  pendingOutboundTag: string | null;
   runtimeDebug: RuntimeDebugSnapshot | null;
   runtimePhase: RuntimePhase;
   isRunning: boolean;
   hasConfig: boolean;
+  activeConfigProfileId: string | null;
   onSelect: (tag: string) => void;
   onRemove: (id: string) => void;
   onRemoveGroup: (tag: string) => void;
@@ -57,14 +95,46 @@ function guessFlag(tag: string): string {
   return "\u{1F310}"; // globe
 }
 
+function sortNodeIds(
+  currentOrder: string[],
+  nodes: ProxyNode[],
+  latencies: Record<string, LatencyResult>
+): string[] {
+  const validIds = new Set(nodes.map((node) => node.id));
+  const order = currentOrder.filter((nodeId) => validIds.has(nodeId));
+  const seen = new Set(order);
+  for (const node of nodes) {
+    if (!seen.has(node.id)) order.push(node.id);
+  }
+  const stableIndex = new Map(order.map((nodeId, index) => [nodeId, index]));
+  const rank = (result: LatencyResult | undefined) => {
+    if (result?.status === "ok") return 0;
+    if (!result) return 1;
+    return 2;
+  };
+  return [...order].sort((leftId, rightId) => {
+    const left = latencies[leftId];
+    const right = latencies[rightId];
+    const rankDifference = rank(left) - rank(right);
+    if (rankDifference !== 0) return rankDifference;
+    if (left?.status === "ok" && right?.status === "ok") {
+      const difference = left.delayMs - right.delayMs;
+      if (Math.abs(difference) >= 30) return difference;
+    }
+    return (stableIndex.get(leftId) ?? 0) - (stableIndex.get(rightId) ?? 0);
+  });
+}
+
 function NodeList({
   nodes,
   profiles,
   selectedOutboundTag,
+  pendingOutboundTag,
   runtimeDebug,
   runtimePhase,
   isRunning,
   hasConfig,
+  activeConfigProfileId,
   onSelect,
   onRemove,
   onRemoveGroup,
@@ -73,68 +143,173 @@ function NodeList({
 }: NodeListProps) {
   const [latencies, setLatencies] = useState<Record<string, LatencyResult>>({});
   const [testing, setTesting] = useState(false);
+  const [testProgress, setTestProgress] = useState<LatencyBatchSnapshot | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-  const [latencyMode, setLatencyMode] = useState<"auto" | "connect" | "http">("auto");
+  const [latencySettings, setLatencySettings] = useState<AppSettings | null>(null);
   const [selectedDetailNode, setSelectedDetailNode] = useState<ProxyNode | null>(null);
   const [showDetail, setShowDetail] = useState(false);
+  const [testingNodeIds, setTestingNodeIds] = useState<Set<string>>(() => new Set());
+  const [displayNodeIds, setDisplayNodeIds] = useState<string[]>(() => nodes.map((node) => node.id));
 
-  // Prevent duplicate auto-test from React StrictMode double-invocation
-  const autoTestedRef = useRef(false);
+  const activeRunIdRef = useRef("");
+  const autoTestedKeyRef = useRef("");
+  const latenciesRef = useRef<Record<string, LatencyResult>>({});
+  const progressStageRef = useRef<LatencyBatchSnapshot["stage"] | null>(null);
+  const displayNodeIdsRef = useRef(displayNodeIds);
+  const nodeGridRef = useRef<HTMLDivElement | null>(null);
+  const flipRectsRef = useRef<Map<string, DOMRect> | null>(null);
 
   const nodeMap = useMemo(
     () => Object.fromEntries(nodes.map((node) => [node.id, node])),
     [nodes]
   );
+  const latencyProfileId = activeConfigProfileId ?? (nodes.length > 0 ? "__manual__" : null);
 
   const topSelectorTag = profiles.find((p) => p.profile_type === "selector")?.tag ?? profiles[0]?.tag ?? null;
+  const recommendedNodeId = useMemo(() => {
+    const healthy = Object.values(latencies).filter((item) => item.status === "ok");
+    return healthy.reduce<LatencyResult | null>(
+      (best, item) => !best || item.delayMs < best.delayMs ? item : best,
+      null
+    )?.nodeId ?? null;
+  }, [latencies]);
+  const hasLatencyResults = Object.keys(latencies).length > 0;
+  const compareNodeLatency = useCallback((leftId: string, rightId: string) => {
+    const left = latencies[leftId];
+    const right = latencies[rightId];
+    const rank = (result: LatencyResult | undefined) => {
+      if (result?.status === "ok") return 0;
+      if (!result) return 1;
+      return 2;
+    };
+    const rankDifference = rank(left) - rank(right);
+    if (rankDifference !== 0) return rankDifference;
+    if (left?.status === "ok" && right?.status === "ok" && Math.abs(left.delayMs - right.delayMs) >= 30) {
+      return left.delayMs - right.delayMs;
+    }
+    return 0;
+  }, [latencies]);
+  const displayedNodes = useMemo(
+    () => displayNodeIds.map((nodeId) => nodeMap[nodeId]).filter((node): node is ProxyNode => Boolean(node)),
+    [displayNodeIds, nodeMap]
+  );
+  const sortGroupMembers = useCallback(
+    (memberTags: string[]) => testing ? memberTags : [...memberTags].sort(compareNodeLatency),
+    [compareNodeLatency, testing]
+  );
   const visibleProfiles = useMemo(
     () => profiles.filter((profile) => !(profile.tag === "proxy" && profile.profile_type === "selector")),
     [profiles]
   );
-  const resolveLatencyMode = (nodeType: string) => {
-    if (latencyMode !== "auto") return latencyMode;
-    return ["shadowsocks", "vmess", "trojan", "vless", "hysteria2", "tuic", "wireguard"].includes(nodeType)
-      ? "http" : "connect";
-  };
 
-  const testAllLatency = useCallback(async () => {
+  const applyLatencySort = useCallback((snapshot: Record<string, LatencyResult>) => {
+    const nextOrder = sortNodeIds(displayNodeIdsRef.current, nodes, snapshot);
+    if (nextOrder.length === displayNodeIdsRef.current.length
+      && nextOrder.every((nodeId, index) => displayNodeIdsRef.current[index] === nodeId)) return;
+    const firstRects = new Map<string, DOMRect>();
+    nodeGridRef.current?.querySelectorAll<HTMLElement>("[data-node-id]").forEach((element) => {
+      if (element.dataset.nodeId) firstRects.set(element.dataset.nodeId, element.getBoundingClientRect());
+    });
+    flipRectsRef.current = firstRects;
+    displayNodeIdsRef.current = nextOrder;
+    setDisplayNodeIds(nextOrder);
+  }, [nodes]);
+
+  useEffect(() => {
+    const nextOrder = sortNodeIds(displayNodeIdsRef.current, nodes, latenciesRef.current);
+    displayNodeIdsRef.current = nextOrder;
+    setDisplayNodeIds(nextOrder);
+  }, [nodes]);
+
+  useLayoutEffect(() => {
+    const firstRects = flipRectsRef.current;
+    flipRectsRef.current = null;
+    if (!firstRects || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    nodeGridRef.current?.querySelectorAll<HTMLElement>("[data-node-id]").forEach((element) => {
+      const nodeId = element.dataset.nodeId;
+      const first = nodeId ? firstRects.get(nodeId) : undefined;
+      if (!first) return;
+      const last = element.getBoundingClientRect();
+      const deltaX = first.left - last.left;
+      const deltaY = first.top - last.top;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+      element.getAnimations().forEach((animation) => animation.cancel());
+      element.animate(
+        [{ transform: `translate(${deltaX}px, ${deltaY}px)` }, { transform: "translate(0, 0)" }],
+        { duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+      );
+    });
+  }, [displayNodeIds]);
+
+  const startLatencyTest = useCallback(async (nodeIds: string[], mode: LatencyTestMode = "accurate") => {
+    if (!latencyProfileId || nodeIds.length === 0) return;
     setTesting(true);
+    setTestingNodeIds(new Set(nodeIds));
+    setTestError(null);
+    progressStageRef.current = mode === "quick_auto" ? "quick" : "confirmed";
+    setTestProgress({
+      runId: "", profileId: latencyProfileId, state: "running",
+      completed: 0, total: nodeIds.length, succeeded: 0, failed: 0, results: [],
+      stage: mode === "quick_auto" ? "quick" : "confirmed",
+    });
     try {
-      const testableNodes = nodes.filter((node) => node.server && node.port !== 0);
-      const concurrency = Math.min(4, Math.max(1, testableNodes.length));
-      let cursor = 0;
-
-      const runSingleTest = async (node: ProxyNode) => {
-        try {
-          const result = await invoke<LatencyResult>("test_node_latency", {
-            nodeId: node.id, nodeType: node.node_type, server: node.server,
-            port: node.port, settings: node.settings, mode: resolveLatencyMode(node.node_type),
-          });
-          setLatencies((prev) => ({ ...prev, [node.id]: result }));
-        } catch {
-          setLatencies((prev) => ({ ...prev, [node.id]: { node_id: node.id, latency_ms: -1, status: "error" } }));
-        }
-      };
-
-      const workers = Array.from({ length: concurrency }, async () => {
-        while (cursor < testableNodes.length) { const node = testableNodes[cursor]; cursor += 1; await runSingleTest(node); }
+      const snapshot = await invoke<LatencyBatchSnapshot>("start_latency_test", {
+        request: { profileId: latencyProfileId, nodeIds, mode },
       });
-      await Promise.all(workers);
-    } finally { setTesting(false); }
-  }, [latencyMode, nodes]);
+      activeRunIdRef.current = snapshot.runId;
+      const merged = {
+        ...latenciesRef.current,
+        ...Object.fromEntries(snapshot.results.map((item) => [item.nodeId, item])),
+      };
+      latenciesRef.current = merged;
+      setLatencies(merged);
+      applyLatencySort(merged);
+      setTestProgress(snapshot);
+    } catch (error) {
+      console.error("Latency test failed:", error);
+      setTestError(String(error));
+      setTestProgress((prev) => prev ? { ...prev, state: "cancelled" } : null);
+    } finally {
+      setTesting(false);
+      setTestingNodeIds(new Set());
+    }
+  }, [applyLatencySort, latencyProfileId]);
+
+  const testAllLatency = useCallback((mode: LatencyTestMode = "accurate") => {
+    const nodeIds = nodes.filter((node) => node.server && node.port !== 0).map((node) => node.id);
+    return startLatencyTest(nodeIds, mode);
+  }, [nodes, startLatencyTest]);
+
+  const cancelLatencyTest = useCallback(async () => {
+    await invoke("cancel_latency_test", { runId: activeRunIdRef.current });
+  }, []);
 
   const renderLatency = (nodeId: string) => {
     const result = latencies[nodeId];
+    if (testingNodeIds.has(nodeId) && !result) {
+      return (
+        <span className="inline-flex min-w-[4.8rem] items-center justify-end gap-1 text-xs text-content-muted">
+          <Loader2 size={11} className="animate-spin" /> Testing
+        </span>
+      );
+    }
     if (!result) return null;
     if (result.status === "ok") {
-      const ms = result.latency_ms;
+      const ms = result.delayMs;
       let color = "text-green-500";
       if (ms > 300) color = "text-yellow-500";
       if (ms > 800) color = "text-red-500";
-      return <span className={`text-xs font-mono tabular-nums ${color}`}>{ms}ms</span>;
+      return (
+        <button type="button" onClick={(event) => { event.stopPropagation(); void startLatencyTest([nodeId]); }}
+          className={`inline-flex min-w-[4.8rem] justify-end text-xs font-mono tabular-nums ${color}`}
+          title={`${result.stage === "quick" ? "Quick estimate" : "Confirmed median"} · jitter ${result.jitterMs ?? 0}ms · ${result.source}`}>
+          {result.stage === "quick" ? "~" : ""}{ms}ms
+        </button>
+      );
     }
-    if (result.status === "timeout") return <span className="text-xs text-red-500">Timeout</span>;
-    return <span className="text-xs text-red-500">Failed</span>;
+    if (result.status === "timeout") return <span className="inline-flex min-w-[4.8rem] justify-end text-xs text-red-500" title="URL test timed out">Timeout</span>;
+    return <span className="inline-flex min-w-[4.8rem] justify-end text-xs text-red-500" title={result.errorKind ?? "URL test failed"}>Failed</span>;
   };
 
   const toggleGroup = (tag: string) => setExpandedGroups((prev) => ({ ...prev, [tag]: !prev[tag] }));
@@ -155,18 +330,18 @@ function NodeList({
       .map((tag) => latencies[tag])
       .filter((result): result is LatencyResult => !!result && result.status === "ok");
     if (candidates.length === 0) return null;
-    const fastest = candidates.reduce((best, c) => c.latency_ms < best.latency_ms ? c : best);
+    const fastest = candidates.reduce((best, c) => c.delayMs < best.delayMs ? c : best);
     let color = "text-green-500";
-    if (fastest.latency_ms > 300) color = "text-yellow-500";
-    if (fastest.latency_ms > 800) color = "text-red-500";
+    if (fastest.delayMs > 300) color = "text-yellow-500";
+    if (fastest.delayMs > 800) color = "text-red-500";
     return (
       <span className={`rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-mono ${color}`}>
-        best {fastest.latency_ms}ms
+        best {fastest.delayMs}ms
       </span>
     );
   };
 
-  const isRuntimeTransitioning = runtimePhase === "starting" || runtimePhase === "switching" || runtimePhase === "stopping";
+  const isRuntimeTransitioning = runtimePhase === "starting" || runtimePhase === "stopping";
   const runtimeGroupTag = runtimeDebug?.top_selector_default || null;
   const runtimeLeafNodeId = runtimeDebug?.active_leaf_outbound || null;
 
@@ -177,10 +352,75 @@ function NodeList({
   }, [nodeMap, runtimeLeafNodeId]);
 
   useEffect(() => {
-    if (testing || nodes.length === 0 || autoTestedRef.current) return;
-    autoTestedRef.current = true;
-    void testAllLatency();
-  }, [nodes.length, testAllLatency, testing]);
+    let unlisten: (() => void) | undefined;
+    let flushTimer: number | undefined;
+    const buffered: LatencyTestProgress[] = [];
+    const flush = () => {
+      flushTimer = undefined;
+      if (buffered.length === 0) return;
+      const batch = buffered.splice(0, buffered.length);
+      const latest = batch[batch.length - 1];
+      const previousStage = progressStageRef.current;
+      const updates: Record<string, LatencyResult> = {};
+      for (const progress of batch) {
+        if (progress.result) updates[progress.result.nodeId] = progress.result;
+      }
+      const merged = { ...latenciesRef.current, ...updates };
+      latenciesRef.current = merged;
+      progressStageRef.current = latest.stage;
+      const stageChangedToConfirmation = previousStage === "quick" && latest.stage === "confirmed";
+      const terminal = latest.state === "completed" || latest.state === "cancelled";
+
+      startTransition(() => {
+        if (Object.keys(updates).length > 0) setLatencies(merged);
+        setTestProgress({ ...latest, results: [] });
+        setTestingNodeIds((current) => {
+          if (terminal) return new Set();
+          const next = new Set(current);
+          for (const nodeId of Object.keys(updates)) next.delete(nodeId);
+          return next;
+        });
+        if (stageChangedToConfirmation || terminal) applyLatencySort(merged);
+        if (terminal) setTesting(false);
+      });
+    };
+    void listen<LatencyTestProgress>("latency-test-progress", (event) => {
+      const progress = event.payload;
+      if (progress.profileId !== latencyProfileId) return;
+      activeRunIdRef.current = progress.runId;
+      buffered.push(progress);
+      if (flushTimer === undefined) flushTimer = window.setTimeout(flush, 50);
+    }).then((dispose) => { unlisten = dispose; });
+    return () => {
+      unlisten?.();
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer);
+    };
+  }, [applyLatencySort, latencyProfileId]);
+
+  useEffect(() => {
+    void invoke<AppSettings>("get_app_settings").then(setLatencySettings).catch(() => setLatencySettings(null));
+  }, []);
+
+  useEffect(() => {
+    activeRunIdRef.current = "";
+    autoTestedKeyRef.current = "";
+    latenciesRef.current = {};
+    progressStageRef.current = null;
+    setLatencies({});
+    const originalOrder = nodes.map((node) => node.id);
+    displayNodeIdsRef.current = originalOrder;
+    setDisplayNodeIds(originalOrder);
+    setTestProgress(null);
+    setTestError(null);
+  }, [latencyProfileId]);
+
+  useEffect(() => {
+    if (!latencySettings?.latency_auto_test || !latencyProfileId || nodes.length === 0 || testing) return;
+    const key = `${latencyProfileId}:${nodes.map((node) => node.id).sort().join("|")}`;
+    if (autoTestedKeyRef.current === key) return;
+    autoTestedKeyRef.current = key;
+    void testAllLatency("quick_auto").catch(() => setTesting(false));
+  }, [latencyProfileId, latencySettings?.latency_auto_test, nodes, testAllLatency, testing]);
 
   const handleSelectNodeRow = (node: ProxyNode) => {
     setSelectedDetailNode(node);
@@ -197,12 +437,18 @@ function NodeList({
             <h2 className="text-[1.05rem] font-semibold tracking-tight text-content">Outbound selection</h2>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <ModeToggle value={latencyMode} onChange={setLatencyMode} compact options={[
-              { value: "auto", label: "Auto", icon: <Zap size={13} /> },
-              { value: "connect", label: "Connect", icon: <Server size={13} /> },
-              { value: "http", label: "HTTP", icon: <Globe size={13} /> },
-            ]} />
-            <button onClick={testAllLatency} disabled={testing || nodes.length === 0}
+            {testProgress && testing && (
+              <span className="status-chip">
+                {testProgress.stage === "quick" ? "Quick scan" : "Confirming"} · {testProgress.completed}/{testProgress.total} · {testProgress.succeeded} ok · {testProgress.failed} failed
+              </span>
+            )}
+            {testing && (
+              <button onClick={() => void cancelLatencyTest()}
+                className="btn-secondary rounded-2xl px-3 py-1.5 text-sm text-red-500">
+                Cancel
+              </button>
+            )}
+            <button onClick={() => void testAllLatency("accurate")} disabled={testing || nodes.length === 0 || !latencyProfileId}
               className={`btn-secondary flex items-center gap-1.5 rounded-2xl px-3 py-1.5 text-sm transition-colors ${testing ? "cursor-not-allowed opacity-70" : ""}`}>
               <Activity size={14} className={testing ? "animate-pulse" : ""} />
               {testing ? "Testing..." : `Test All`}
@@ -212,6 +458,15 @@ function NodeList({
             </button>
           </div>
         </div>
+        {testError && (
+          <div role="alert" className="mt-2.5 flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/8 px-3 py-2 text-xs text-red-500">
+            <span className="font-semibold">Latency test failed:</span>
+            <span className="min-w-0 flex-1 break-words text-content-secondary">{testError}</span>
+            <button type="button" onClick={() => setTestError(null)} className="shrink-0 rounded p-0.5 hover:bg-red-500/10" title="Dismiss error">
+              <X size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Nodes layout: list | detail panel */}
@@ -228,7 +483,7 @@ function NodeList({
               {visibleProfiles.map((profile) => {
                 const isLiveGroup = isRunning && !isRuntimeTransitioning && runtimeGroupTag === profile.tag;
                 const isSelectedGroup = selectedOutboundTag === profile.tag;
-                const isSwitchingGroup = runtimePhase === "switching" && selectedOutboundTag === profile.tag;
+                const isSwitchingGroup = runtimePhase === "switching" && pendingOutboundTag === profile.tag;
                 const showSelectedGroup = isSelectedGroup && !isLiveGroup;
 
                 return (
@@ -256,6 +511,15 @@ function NodeList({
                         {showSelectedGroup && <span className="status-chip status-chip-primary">Selected</span>}
                         <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">{profile.outbounds.length} members</span>
                         {renderGroupLatency(profile.outbounds)}
+                        <button type="button" disabled={testing || !latencyProfileId}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void startLatencyTest(resolveMemberNodeTags(profile.outbounds));
+                          }}
+                          className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-primary-500/10 hover:text-primary-500 disabled:opacity-40"
+                          title="Test group latency">
+                          <Activity size={13} />
+                        </button>
                         {topSelectorTag === profile.tag && <span className="rounded-full bg-primary-600/15 px-2 py-0.5 text-[10px] text-primary-500">default</span>}
                         {hasConfig && topSelectorTag !== profile.tag && (
                           <button type="button" onClick={(e) => { e.stopPropagation(); onRemoveGroup(profile.tag); }}
@@ -268,12 +532,12 @@ function NodeList({
                     {expandedGroups[profile.tag] && (
                       <div className="border-t border-border/60 bg-muted/20 px-3 py-3">
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                          {profile.outbounds.map((memberTag) => {
+                          {sortGroupMembers(profile.outbounds).map((memberTag) => {
                             const memberNode = nodeMap[memberTag];
                             const memberProfile = profiles.find((item) => item.tag === memberTag);
                             const isLiveNode = Boolean(isRunning && !isRuntimeTransitioning && memberNode && runtimeResolvedNodeId === memberNode.id);
                             const isSelected = selectedOutboundTag === memberTag;
-                            const isSwitchingTarget = runtimePhase === "switching" && selectedOutboundTag === memberTag;
+                            const isSwitchingTarget = runtimePhase === "switching" && pendingOutboundTag === memberTag;
                             const showSelected = isSelected && !isLiveNode;
 
                             return (
@@ -292,6 +556,7 @@ function NodeList({
                                 <span className="max-w-[12rem] truncate text-xs font-medium text-content">{memberTag}</span>
                                 {memberProfile && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-yellow-500/20 dark:text-yellow-400">{memberProfile.profile_type}</span>}
                                 {memberNode && <span className="rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-content-secondary">{PROTOCOL_LABELS[memberNode.node_type as ProtocolType] || memberNode.node_type}</span>}
+                                {memberNode?.id === recommendedNodeId && <span className="rounded bg-emerald-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-500">Best</span>}
                                 {isSwitchingTarget && <span className="text-[10px] text-primary-500">Switching</span>}
                                 {isLiveNode && !isSwitchingTarget && <span className="text-[10px] text-emerald-500">Live</span>}
                                 {showSelected && !isSwitchingTarget && <span className="text-[10px] text-primary-500">Selected</span>}
@@ -319,19 +584,31 @@ function NodeList({
             <div className="panel-card rounded-[20px]">
               <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
                 <h3 className="text-sm font-semibold text-content">Proxy Nodes</h3>
-                <span className="status-chip">{nodes.length}</span>
+                <div className="flex items-center gap-1.5">
+                  {hasLatencyResults && !testing && <span className="status-chip">Fastest first</span>}
+                  <span className="status-chip">{nodes.length}</span>
+                </div>
               </div>
-              <div className="grid grid-cols-1 gap-2 p-4 md:grid-cols-2 xl:grid-cols-3">
-                {nodes.map((node) => {
+              <div ref={nodeGridRef} className="grid grid-cols-1 gap-2 p-4 md:grid-cols-2 xl:grid-cols-3">
+                {displayedNodes.map((node) => {
                   const isSelected = node.id === selectedOutboundTag;
                   const isRuntimeNode = Boolean(isRunning && !isRuntimeTransitioning && runtimeResolvedNodeId === node.id);
-                  const isSwitchingTarget = runtimePhase === "switching" && selectedOutboundTag === node.id;
+                  const isSwitchingTarget = runtimePhase === "switching" && pendingOutboundTag === node.id;
                   const showSelected = isSelected && !isRuntimeNode;
                   const protocolLabel = PROTOCOL_LABELS[node.node_type as ProtocolType] || node.node_type;
 
                   return (
-                    <div key={node.id}
+                    <div key={node.id} data-node-id={node.id}
                       onClick={() => { onSelect(node.id); handleSelectNodeRow(node); }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        onSelect(node.id);
+                        handleSelectNodeRow(node);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Select ${node.name}`}
                       className={`group flex cursor-pointer items-center gap-3 rounded-[18px] border px-3 py-2.5 transition-all ${
                         isRuntimeNode ? "border-emerald-500/30 bg-emerald-500/10 dark:bg-emerald-500/8" :
                         showSelected ? "border-primary-500/30 bg-primary-600/10" :
@@ -349,6 +626,7 @@ function NodeList({
                         </div>
                         <div className="mt-1 flex items-center gap-2">
                           <span className="rounded-xl bg-surface-elevated px-2 py-0.5 text-[10px] text-content-secondary">{protocolLabel}</span>
+                          {node.id === recommendedNodeId && <span className="rounded-xl bg-emerald-500/12 px-2 py-0.5 text-[10px] font-semibold text-emerald-500">Best</span>}
                           {isSwitchingTarget && <span className="text-[10px] text-primary-500">Switching</span>}
                           {isRuntimeNode && !isSwitchingTarget && <span className="text-[10px] text-emerald-500">Live</span>}
                           {showSelected && !isSwitchingTarget && <span className="text-[10px] text-primary-500">Selected</span>}
@@ -356,6 +634,11 @@ function NodeList({
                         </div>
                       </div>
                       <div className={`flex shrink-0 items-center gap-1 transition-opacity ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
+                        <button onClick={(e) => { e.stopPropagation(); void startLatencyTest([node.id]); }}
+                          disabled={testing || !latencyProfileId}
+                          className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-primary-500/10 hover:text-primary-500 disabled:opacity-40" title="Test latency">
+                          <Activity size={14} />
+                        </button>
                         <button onClick={(e) => { e.stopPropagation(); onEdit(node); }}
                           className="rounded-xl p-1.5 text-content-muted transition-colors hover:bg-surface-elevated hover:text-content" title="Edit">
                           <Pencil size={14} />
@@ -415,7 +698,13 @@ function NodeDetailPanel({
   const hostRaw = settings.host || settings.sni || settings.server_name;
   const host = hostRaw != null ? String(hostRaw) : undefined;
 
-  const latencyMs = latency?.status === "ok" ? latency.latency_ms : null;
+  const latencyMs = latency?.status === "ok" ? latency.delayMs : null;
+  const [connectivity, setConnectivity] = useState<ConnectivityResult | null>(null);
+  const [testingConnectivity, setTestingConnectivity] = useState(false);
+  useEffect(() => {
+    setConnectivity(null);
+    setTestingConnectivity(false);
+  }, [node.id]);
   let latencyBarPct = 0;
   let latencyColor = "from-success to-warning";
   if (latencyMs != null) {
@@ -448,16 +737,23 @@ function NodeDetailPanel({
         {latencyMs != null ? (
           <>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-extrabold text-success">{latencyMs}ms</span>
-              <span className="text-xs text-content-muted">measured</span>
+              <span className="text-2xl font-extrabold text-success">{latency?.stage === "quick" ? "~" : ""}{latencyMs}ms</span>
+              <span className="text-xs text-content-muted">
+                {latency?.stage === "quick" ? "quick estimate" : "median"} · jitter {latency?.jitterMs ?? 0}ms
+              </span>
             </div>
             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
               <div className={`h-full rounded-full bg-gradient-to-r ${latencyColor}`}
                 style={{ width: `${latencyBarPct}%` }} />
             </div>
+            <p className="mt-2 text-[10px] text-content-muted">
+              {latency?.source === "runtime" ? "Runtime core" : "Probe core"} · {latency ? new Date(latency.testedAt * 1000).toLocaleTimeString() : ""}
+            </p>
           </>
-        ) : latency?.status === "error" ? (
-          <p className="text-sm font-semibold text-error">Failed</p>
+        ) : latency ? (
+          <p className="text-sm font-semibold text-error">
+            {latency.status === "timeout" ? "Timeout" : `Failed${latency.errorKind ? ` · ${latency.errorKind}` : ""}`}
+          </p>
         ) : (
           <p className="text-sm text-content-muted">Not tested</p>
         )}
@@ -473,6 +769,32 @@ function NodeDetailPanel({
         <DetailKv label="ID" value={node.id} />
         <DetailKv label="Status" value={latency?.status === "ok" ? "Healthy" : latency ? "Unhealthy" : "Unknown"} />
       </div>
+      <div className="border-t border-border/60 px-5 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold text-content">TCP entry connectivity</p>
+            <p className="mt-0.5 text-[10px] text-content-muted">Checks the server port only; it does not verify proxy usability.</p>
+          </div>
+          <button type="button" disabled={testingConnectivity || !node.server || node.port === 0}
+            onClick={() => {
+              setTestingConnectivity(true);
+              void invoke<ConnectivityResult>("test_node_connectivity", {
+                nodeId: node.id, server: node.server, port: node.port,
+              }).then(setConnectivity).catch(() => setConnectivity({
+                nodeId: node.id, connectMs: -1, status: "error", errorKind: "dns",
+              })).finally(() => setTestingConnectivity(false));
+            }}
+            className="btn-secondary flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs disabled:opacity-50">
+            {testingConnectivity && <Loader2 size={12} className="animate-spin" />}
+            {testingConnectivity ? "Checking" : "Check TCP"}
+          </button>
+        </div>
+        {connectivity && (
+          <p className={`mt-2 text-xs font-semibold ${connectivity.status === "ok" ? "text-emerald-500" : "text-red-500"}`}>
+            {connectivity.status === "ok" ? `Connected in ${connectivity.connectMs}ms` : connectivity.status === "timeout" ? "Connection timed out" : "Connection failed"}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -482,31 +804,6 @@ function DetailKv({ label, value }: { label: string; value: string }) {
     <div className="min-w-0">
       <p className="mb-0.5 text-[11px] text-content-muted">{label}</p>
       <p className="truncate text-[13px] font-semibold text-content">{value}</p>
-    </div>
-  );
-}
-
-function ModeToggle({
-  value, onChange, options, compact = false,
-}: {
-  value: "auto" | "connect" | "http";
-  onChange: (value: "auto" | "connect" | "http") => void;
-  options: Array<{ value: "auto" | "connect" | "http"; label: string; icon: React.ReactNode }>;
-  compact?: boolean;
-}) {
-  return (
-    <div className={`mode-toggle ${compact ? "px-0.5 py-0.5" : ""}`}>
-      {options.map((option) => {
-        const active = value === option.value;
-        return (
-          <button key={option.value} type="button" onClick={() => onChange(option.value)}
-            className={`mode-toggle-button ${compact ? "px-3 py-1.5 text-[0.72rem]" : ""} ${active ? "active" : ""}`}
-            aria-pressed={active}>
-            <span>{option.icon}</span>
-            <span>{option.label}</span>
-          </button>
-        );
-      })}
     </div>
   );
 }

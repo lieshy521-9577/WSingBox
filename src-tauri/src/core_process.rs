@@ -1,6 +1,7 @@
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
@@ -11,6 +12,8 @@ use tauri::Manager;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+static CORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+
 const DEPRECATED_ENV_VARS: [(&str, &str); 6] = [
     ("ENABLE_DEPRECATED_LEGACY_DNS_SERVERS", "true"),
     ("ENABLE_DEPRECATED_OUTBOUND_DNS_RULE_ITEM", "true"),
@@ -19,6 +22,12 @@ const DEPRECATED_ENV_VARS: [(&str, &str); 6] = [
     ("ENABLE_DEPRECATED_DEFAULT_INTERFACE_ADDRESS", "true"),
     ("ENABLE_DEPRECATED_LEGACY_OOM_KILLER", "true"),
 ];
+
+pub fn lock_core_operation() -> Result<MutexGuard<'static, ()>, String> {
+    CORE_OPERATION_LOCK
+        .lock()
+        .map_err(|_| "Core operation lock is unavailable".to_string())
+}
 
 /// Check if the current process is running with elevated (admin) privileges.
 /// Uses Windows SID check via PowerShell — only called at startup or connect time.
@@ -58,6 +67,46 @@ pub struct CoreState {
     pub log_path: String,
     pub tun_enabled: bool,
     pub started_at: u64,
+    #[serde(default)]
+    pub clash_api_url: String,
+    #[serde(default)]
+    pub clash_api_secret: String,
+    #[serde(default)]
+    pub profile_id: String,
+    #[serde(default)]
+    pub config_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CoreApiMetadata {
+    pub clash_api_url: String,
+    pub clash_api_secret: String,
+    pub profile_id: String,
+    pub config_fingerprint: String,
+}
+
+fn build_core_state(
+    pid: Option<u32>,
+    launcher_pid: Option<u32>,
+    singbox_path: &str,
+    config_path: &str,
+    log_path: &str,
+    tun_enabled: bool,
+    api: &CoreApiMetadata,
+) -> CoreState {
+    CoreState {
+        pid,
+        launcher_pid,
+        binary_path: singbox_path.to_string(),
+        config_path: config_path.to_string(),
+        log_path: log_path.to_string(),
+        tun_enabled,
+        started_at: current_unix_timestamp(),
+        clash_api_url: api.clash_api_url.clone(),
+        clash_api_secret: api.clash_api_secret.clone(),
+        profile_id: api.profile_id.clone(),
+        config_fingerprint: api.config_fingerprint.clone(),
+    }
 }
 
 pub fn hidden_command(program: &str) -> Command {
@@ -241,6 +290,7 @@ pub fn launch_singbox_with_config(
     config_path: &str,
     log_path: &str,
     tun_enabled: bool,
+    api: &CoreApiMetadata,
 ) -> Result<(), String> {
     if tun_enabled {
         // If already running as admin, spawn sing-box directly — no UAC needed
@@ -258,20 +308,13 @@ pub fn launch_singbox_with_config(
                 .spawn()
                 .map_err(|e| format!("Failed to start sing-box directly: {}", e))?;
 
-            save_core_runtime_state(&CoreState {
-                pid: Some(child.id()),
-                launcher_pid: None,
-                binary_path: singbox_path.to_string(),
-                config_path: config_path.to_string(),
-                log_path: log_path.to_string(),
-                tun_enabled,
-                started_at: current_unix_timestamp(),
-            })?;
+            save_core_runtime_state(&build_core_state(
+                Some(child.id()), None, singbox_path, config_path, log_path, tun_enabled, api,
+            ))?;
             return Ok(());
         }
 
-        // Not elevated — use single combined elevated script that kills old + starts new
-        // This reduces from 3 UAC prompts (separate stop + start) to 1 UAC per action
+        // Not elevated: launch the core through one elevated helper process.
         let singbox_path_quoted = quote_powershell_literal(singbox_path);
         let config_path_quoted = quote_powershell_literal(config_path);
         let log_path_quoted = quote_powershell_literal(log_path);
@@ -312,15 +355,9 @@ pub fn launch_singbox_with_config(
 
         for _ in 0..20 {
             if let Some(pid) = load_saved_core_pid().ok().flatten() {
-                save_core_runtime_state(&CoreState {
-                    pid: Some(pid),
-                    launcher_pid,
-                    binary_path: singbox_path.to_string(),
-                    config_path: config_path.to_string(),
-                    log_path: log_path.to_string(),
-                    tun_enabled,
-                    started_at: current_unix_timestamp(),
-                })?;
+                save_core_runtime_state(&build_core_state(
+                    Some(pid), launcher_pid, singbox_path, config_path, log_path, tun_enabled, api,
+                ))?;
                 break;
             }
             thread::sleep(Duration::from_millis(200));
@@ -343,15 +380,9 @@ pub fn launch_singbox_with_config(
             .spawn()
             .map_err(|e| format!("Failed to start sing-box without elevation: {}", e))?;
 
-        save_core_runtime_state(&CoreState {
-            pid: Some(child.id()),
-            launcher_pid: None,
-            binary_path: singbox_path.to_string(),
-            config_path: config_path.to_string(),
-            log_path: log_path.to_string(),
-            tun_enabled,
-            started_at: current_unix_timestamp(),
-        })?;
+        save_core_runtime_state(&build_core_state(
+            Some(child.id()), None, singbox_path, config_path, log_path, tun_enabled, api,
+        ))?;
     }
 
     Ok(())
@@ -381,6 +412,18 @@ fn save_core_runtime_state(state: &CoreState) -> Result<(), String> {
     std::fs::write(app_paths::core_state_path(), content)
         .map_err(|e| format!("Failed to save core state: {}", e))?;
     Ok(())
+}
+
+pub fn update_core_config_fingerprint(
+    profile_id: &str,
+    config_fingerprint: &str,
+) -> Result<(), String> {
+    let Some(mut state) = load_core_state()? else {
+        return Ok(());
+    };
+    state.profile_id = profile_id.to_string();
+    state.config_fingerprint = config_fingerprint.to_string();
+    save_core_runtime_state(&state)
 }
 
 pub fn clear_core_state() -> Result<(), String> {
@@ -447,11 +490,14 @@ fn detect_managed_singbox_runtime() -> Result<Option<CoreState>, String> {
         .unwrap_or_else(|| app_paths::runtime_config_path().to_string_lossy().to_string());
     let bootstrap_path = normalize_existing_binary_path(app_paths::runtime_bootstrap_config_path())
         .unwrap_or_else(|| app_paths::runtime_bootstrap_config_path().to_string_lossy().to_string());
+    let launch_path = normalize_existing_binary_path(app_paths::runtime_launch_config_path())
+        .unwrap_or_else(|| app_paths::runtime_launch_config_path().to_string_lossy().to_string());
 
     let script = format!(
-        "$process = Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'sing-box.exe' -and ($_.CommandLine -like '*{config}*' -or $_.CommandLine -like '*{bootstrap}*') }} | Select-Object -First 1 ProcessId,ParentProcessId,ExecutablePath,CommandLine; if ($process) {{ $process | ConvertTo-Json -Compress }}",
+        "$process = Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'sing-box.exe' -and ($_.CommandLine -like '*{config}*' -or $_.CommandLine -like '*{bootstrap}*' -or $_.CommandLine -like '*{launch}*') }} | Select-Object -First 1 ProcessId,ParentProcessId,ExecutablePath,CommandLine; if ($process) {{ $process | ConvertTo-Json -Compress }}",
         config = escape_powershell_wildcard_path(&config_path),
         bootstrap = escape_powershell_wildcard_path(&bootstrap_path),
+        launch = escape_powershell_wildcard_path(&launch_path),
     );
 
     let output = hidden_command("powershell")
@@ -498,6 +544,10 @@ fn detect_managed_singbox_runtime() -> Result<Option<CoreState>, String> {
         app_paths::runtime_bootstrap_config_path()
             .to_string_lossy()
             .to_string()
+    } else if command_line.contains("config.launch.json") {
+        app_paths::runtime_launch_config_path()
+            .to_string_lossy()
+            .to_string()
     } else {
         app_paths::runtime_config_path().to_string_lossy().to_string()
     };
@@ -518,6 +568,10 @@ fn detect_managed_singbox_runtime() -> Result<Option<CoreState>, String> {
                 .map(|content| content.contains("\"type\": \"tun\""))
                 .unwrap_or(false),
         started_at: current_unix_timestamp(),
+        clash_api_url: String::new(),
+        clash_api_secret: String::new(),
+        profile_id: String::new(),
+        config_fingerprint: String::new(),
     }))
 }
 
@@ -625,6 +679,8 @@ fn normalize_existing_binary_path(candidate: std::path::PathBuf) -> Option<Strin
 /// Save a flag to disk indicating the app should auto-connect after restarting as admin.
 pub fn save_elevation_intent() -> Result<(), String> {
     let path = app_paths::app_data_dir().join("elevation-intent.json");
+    let claimed_path = app_paths::app_data_dir().join("elevation-intent.claimed");
+    let _ = std::fs::remove_file(claimed_path);
     let payload = serde_json::json!({
         "auto_connect": true,
         "timestamp": current_unix_timestamp(),
@@ -637,16 +693,18 @@ pub fn save_elevation_intent() -> Result<(), String> {
 /// Deletes the file after reading (one-shot flag).
 pub fn load_elevation_intent() -> bool {
     let path = app_paths::app_data_dir().join("elevation-intent.json");
-    if !path.exists() {
+    let claimed_path = app_paths::app_data_dir().join("elevation-intent.claimed");
+
+    // Renaming claims the one-shot signal atomically, including under React StrictMode.
+    if std::fs::rename(&path, &claimed_path).is_err() {
         return false;
     }
 
-    let result = std::fs::read_to_string(&path).ok().and_then(|content| {
+    let result = std::fs::read_to_string(&claimed_path).ok().and_then(|content| {
         serde_json::from_str::<serde_json::Value>(&content).ok()
     });
 
-    // Always delete after reading — this is a one-shot signal
-    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&claimed_path);
 
     result
         .and_then(|v| v.get("auto_connect").and_then(|v| v.as_bool()))

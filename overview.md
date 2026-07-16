@@ -1,48 +1,34 @@
-# SingBox Client UI Redesign — Overview
+# UAC Optimization Overview
 
 ## What was done
+Reduced TUN mode UAC prompts from **3 → 1** (worst case), and **1 → 0** (when app runs as admin).
 
-Created a complete UI redesign package for the SingBox desktop proxy client based on the provided screenshot and workspace structure.
+## Key changes
 
-### Deliverables
+### Option A — Merge elevated operations (3→1 UAC)
+- `launch_singbox_with_config(tun=true)` now combines `Stop-Process` (kill old) + start new in a single `-Verb RunAs` PowerShell command
+- Bootstrap retry no longer calls separate `stop_singbox_process()` — just calls `launch_singbox_with_config()` again, which handles kill+start in one UAC
+- `stop_singbox_process()` checks `is_elevated()` — if admin, kills directly without elevated fallback
 
-1. **`design-system.md`** — Full design tokens and component specifications.
-   - Color palette for light/dark themes with WCAG AA contrast targets.
-   - Typography, spacing, radius, shadow, and motion tokens.
-   - Component library covering app shell, navigation, buttons, cards, status pills, node rows, log rows, switches, inputs, and empty states.
-   - Responsive breakpoints and accessibility requirements.
+### Option B — Self-elevation (1→0 UAC)
+- Added `is_elevated()` check (Windows Administrators SID)
+- Added `request_elevation` Tauri command — restarts app as admin via UAC, then exits current instance
+- Added `save/load_elevation_intent` — one-shot flag for auto-connect after admin restart
+- When app IS elevated, `launch_singbox_with_config` spawns sing-box directly (no `-Verb RunAs`)
+- Sidebar shows elevation status: amber "Restart as admin" button (not elevated) or emerald "Running as admin" badge (elevated)
 
-2. **`prototype.html`** — Self-contained interactive five-screen prototype.
-   - **Overview**: runtime status, snapshot tiles, active rules, recent activity.
-   - **Nodes**: outbound groups, selectable node cards with latency/flag/state.
-   - **Logs**: filter chips, search, color-coded log stream, pause/copy/clear.
-   - **Settings**: segmented tabs (Inbound / Rule Sets / TUN / DNS), switch rows, inputs.
-   - **About**: brand card, version, diagnostics key-value list.
-   - Interactive navigation (sidebar + mobile bottom rail), theme toggle, connection switch, node selection, log filtering, settings tabs.
+## UAC count comparison
+| Scenario | Before | After |
+|----------|--------|-------|
+| Clean start (TUN) | 1 UAC | 1 UAC (or 0 if admin) |
+| Bootstrap retry (TUN) | 3 UAC | 1 UAC (or 0 if admin) |
+| Stop elevated process | 1 UAC | 0 UAC (if admin) or 1 UAC |
+| Switch node while running | 2 UAC | 1 UAC (or 0 if admin) |
 
-3. **`overview.md`** — This summary document.
-
-## Key design decisions
-
-- **Kept the dark-first, desktop-native aesthetic** from the original screenshot while tightening spacing, typography, and hierarchy.
-- **Unified status language**: a single green/red/amber/blue semantic palette runs through session pills, control bar, node latency, and log levels.
-- **Improved scanability**: snapshot tiles replace dense header metadata; node rows use radio-selection and clear latency badges.
-- **Accessible by default**: 44px minimum touch targets, visible focus indicators, `prefers-reduced-motion` support, and color-always-paired-with-text/icon.
-- **Responsive**: sidebar collapses to a bottom navigation rail below 760px; grids adapt from 4 → 2 → 1 columns.
-
-## Notes and follow-up
-
-- `index.html` was intentionally **not** overwritten because it is the Vite entry point for the existing React + Tauri app. The prototype lives in `prototype.html` and can be opened directly in any browser.
-- Recent implementation fixes applied to `src/`:
-  1. **Light mode contrast** — darkened `--text-secondary` / `--text-muted` tokens; replaced ambiguous `text-primary`/`text-secondary`/`text-muted` classes with semantic `text-content`/`text-content-secondary`/`text-content-muted` in Sidebar, TitleBar, AboutPanel, App empty state.
-  2. **Missing surface classes** — added `.panel-card`, `.subtle-row`, `.mode-toggle` / `.mode-toggle-button` definitions in `global.css` so panels, rows, and the latency mode control render correctly in light mode.
-  3. **LogViewer theme-aware** — removed hardcoded `bg-slate-950`/`text-slate-300` terminal colors; now uses semantic surface/content tokens with dark variants.
-  4. **Overview live route** — `ConfigOverviewPanel` now receives `runtimeDebug` and displays the actual `active_leaf_outbound` as "Live route" when sing-box is running, avoiding the mismatch where the route showed a newly selected profile while the runtime was still on the old node.
-  5. **Profile export/refresh feedback** — wired the existing Toast system into the UI; added success/error toasts for copy-subscription-URL, copy-profile-JSON, and refresh-from-URL actions; added a Refresh button for URL profiles in the sidebar dropdown.
-  6. **Node latency duplicate test** — fixed `NodeList` auto-test running twice under React StrictMode by guarding with `useRef`.
-
-## Files created
-
-- `C:\_dCode\SingBox\design-system.md`
-- `C:\_dCode\SingBox\prototype.html`
-- `C:\_dCode\SingBox\overview.md`
+## Files modified
+- `src-tauri/src/core_process.rs` — `is_elevated`, merged launch, elevation intent, `restart_as_admin`
+- `src-tauri/src/commands/singbox.rs` — 3 new Tauri commands, simplified retry
+- `src-tauri/src/lib.rs` — registered commands
+- `src/hooks/useSingbox.ts` — `isElevated` state, `requestElevation`, auto-connect
+- `src/components/Sidebar.tsx` — elevation status banner
+- `src/App.tsx` — passed new props to Sidebar

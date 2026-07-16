@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ConfigProfile, ProxyNode, StartupHealthReport } from "../types";
@@ -32,6 +32,22 @@ interface CoreEventPayload {
   message: string;
 }
 
+interface RuntimeReconcileSnapshot {
+  running: boolean;
+  proxy_enabled: boolean;
+  adopted_existing_runtime: boolean;
+  cleared_stale_state: boolean;
+  message: string;
+}
+
+interface RuntimeOutboundSwitchResult {
+  requestedTag: string;
+  activeTag: string;
+  switchedLive: boolean;
+  closedConnections: number;
+  warnings: string[];
+}
+
 export function useSingbox() {
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -41,12 +57,25 @@ export function useSingbox() {
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [runtimePhase, setRuntimePhase] = useState<RuntimePhase>("stopped");
   const [selectedOutboundTag, setSelectedOutboundTag] = useState<string | null>(null);
+  const [pendingOutboundTag, setPendingOutboundTag] = useState<string | null>(null);
   const [hasConfig, setHasConfig] = useState(false);
   const [runtimeDebug, setRuntimeDebug] = useState<RuntimeDebugSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [switchStatus, setSwitchStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [startupHealth, setStartupHealth] = useState<StartupHealthReport | null>(null);
+  const [isElevated, setIsElevated] = useState<boolean | null>(null);
+  const queuedOutboundTagRef = useRef<string | null>(null);
+  const outboundSwitchWorkerRef = useRef<Promise<void> | null>(null);
+  const startProxyInFlightRef = useRef(false);
+  const isRunningRef = useRef(isRunning);
+  const hasConfigRef = useRef(hasConfig);
+  isRunningRef.current = isRunning;
+  hasConfigRef.current = hasConfig;
+  const tunNeedsElevation = Boolean(
+    startupHealth?.items.some((item) => item.key === "tun" && item.status === "warn") &&
+      isElevated === false
+  );
 
   const syncTrayConnectionState = useCallback(async (connected: boolean) => {
     try {
@@ -63,17 +92,63 @@ export function useSingbox() {
     }, 1800);
   }, []);
 
+  const checkElevation = useCallback(async () => {
+    try {
+      const elevated = await invoke<boolean>("is_elevated");
+      setIsElevated(elevated);
+    } catch (err) {
+      console.error("Failed to check elevation status:", err);
+      setIsElevated(false);
+    }
+  }, []);
+
+  const requestElevation = useCallback(async () => {
+    try {
+      await invoke("request_elevation");
+      // The app will exit and restart as admin — this process ends here
+    } catch (err) {
+      setError(String(err));
+    }
+  }, []);
+
+  const reconcileRuntime = useCallback(async () => {
+    try {
+      const snapshot = await invoke<RuntimeReconcileSnapshot>("reconcile_runtime_state");
+      setIsRunning(snapshot.running);
+      setProxyEnabled(snapshot.proxy_enabled);
+      setRuntimePhase(snapshot.running ? "running" : "stopped");
+      if (snapshot.running) {
+        setError(null);
+        setSwitchStatus(snapshot.message || "Existing runtime detected");
+      } else if (snapshot.cleared_stale_state) {
+        setError(null);
+        setSwitchStatus("Cleared stale runtime state");
+      }
+      await syncTrayConnectionState(snapshot.running);
+      return snapshot;
+    } catch (err) {
+      console.error("Failed to reconcile runtime state:", err);
+      return null;
+    }
+  }, [syncTrayConnectionState]);
+
   // Load nodes and check status on mount
   useEffect(() => {
-    loadNodes();
-    loadProfiles();
-    loadConfigProfiles();
-    checkStatus();
-    checkConfig();
-    loadActiveOutbound();
-    loadRuntimeDebug();
-    loadActiveConfigProfile();
-    loadStartupHealth();
+    void (async () => {
+      await reconcileRuntime();
+      await Promise.all([
+        loadNodes(),
+        loadProfiles(),
+        loadConfigProfiles(),
+        checkStatus(),
+        checkConfig(),
+        loadActiveOutbound(),
+        loadRuntimeDebug(),
+        loadActiveConfigProfile(),
+        loadStartupHealth(),
+        checkElevation(),
+      ]);
+    })();
   }, []);
 
   const loadNodes = useCallback(async () => {
@@ -133,6 +208,9 @@ export function useSingbox() {
 
         return "stopped";
       });
+      if (running) {
+        setError(null);
+      }
       await syncTrayConnectionState(running);
     } catch (err) {
       console.error("Status check failed:", err);
@@ -361,49 +439,88 @@ export function useSingbox() {
   }, [loadActiveConfigProfile, loadActiveOutbound, loadConfigProfiles, loadNodes, loadProfiles, loadRuntimeDebug, loadStartupHealth, showTransientSwitchStatus]);
 
   const selectOutboundTag = useCallback(async (tag: string) => {
-    let awaitingRuntimeReady = false;
-    try {
-      setLoading(true);
-      setError(null);
-      if (hasConfig) {
-        setRuntimePhase(isRunning ? "switching" : "stopped");
-        setSwitchStatus(`Applying ${tag}...`);
-        await invoke("sync_active_profile_to_runtime");
-        const actual = await invoke<string>("set_active_outbound", { targetTag: tag });
-        setSelectedOutboundTag(actual || null);
-        if (isRunning) {
-          setIsRunning(false);
-          setProxyEnabled(false);
-          setSwitchStatus("Stopping previous node...");
-          await invoke("stop_singbox");
-          setSwitchStatus("Starting selected node...");
-          await invoke<string>("start_singbox");
-          awaitingRuntimeReady = true;
+    queuedOutboundTagRef.current = tag;
+    setPendingOutboundTag(tag);
+    setError(null);
+
+    if (outboundSwitchWorkerRef.current) {
+      await outboundSwitchWorkerRef.current;
+      return;
+    }
+
+    const worker = (async () => {
+      while (queuedOutboundTagRef.current) {
+        const target = queuedOutboundTagRef.current;
+        queuedOutboundTagRef.current = null;
+        setPendingOutboundTag(target);
+
+        if (!hasConfigRef.current) {
+          setSelectedOutboundTag(target);
+          setPendingOutboundTag(null);
+          showTransientSwitchStatus(`Selected ${target}`);
+          continue;
         }
-        await loadProfiles();
-        await loadRuntimeDebug();
-        await loadActiveOutbound();
-        if (!awaitingRuntimeReady) {
-          await checkStatus();
-          showTransientSwitchStatus(`Switched to ${actual || tag}`);
+
+        const wasRunning = isRunningRef.current;
+        if (wasRunning) setRuntimePhase("switching");
+        setSwitchStatus(`Switching to ${target}...`);
+
+        try {
+          const result = await invoke<RuntimeOutboundSwitchResult>("switch_runtime_outbound", {
+            request: { targetTag: target, closeAffectedConnections: true },
+          });
+          if (queuedOutboundTagRef.current) continue;
+
+          isRunningRef.current = result.switchedLive;
+          if (!result.switchedLive && wasRunning) {
+            setIsRunning(false);
+            setProxyEnabled(false);
+            await syncTrayConnectionState(false);
+          }
+          setSelectedOutboundTag(result.activeTag || target);
+          await Promise.all([loadProfiles(), loadRuntimeDebug()]);
+          setRuntimePhase(result.switchedLive ? "running" : "stopped");
+          setPendingOutboundTag(null);
+          const connectionNote = result.closedConnections > 0
+            ? ` · closed ${result.closedConnections} affected connection${result.closedConnections === 1 ? "" : "s"}`
+            : "";
+          const warningNote = result.warnings.length > 0 ? ` · ${result.warnings.join("; ")}` : "";
+          showTransientSwitchStatus(`Switched to ${result.activeTag || target}${connectionNote}${warningNote}`);
+        } catch (err) {
+          if (queuedOutboundTagRef.current) continue;
+          await Promise.all([loadActiveOutbound(), loadRuntimeDebug()]);
+          setRuntimePhase(isRunningRef.current ? "running" : "stopped");
+          setPendingOutboundTag(null);
+          setSwitchStatus(null);
+          setError(String(err));
         }
-      } else {
-        setSelectedOutboundTag(tag);
-        showTransientSwitchStatus(`Selected ${tag}`);
       }
-    } catch (err) {
-      setSwitchStatus(null);
-      setError(String(err));
+    })();
+
+    outboundSwitchWorkerRef.current = worker;
+    try {
+      await worker;
     } finally {
-      if (!awaitingRuntimeReady) {
-        setLoading(false);
+      if (outboundSwitchWorkerRef.current === worker) {
+        outboundSwitchWorkerRef.current = null;
       }
     }
-  }, [checkStatus, hasConfig, isRunning, loadActiveOutbound, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
+  }, [loadActiveOutbound, loadProfiles, loadRuntimeDebug, showTransientSwitchStatus, syncTrayConnectionState]);
 
   const startProxy = useCallback(async () => {
+    if (startProxyInFlightRef.current) return;
+    startProxyInFlightRef.current = true;
     let awaitingRuntimeReady = false;
     try {
+      if (tunNeedsElevation) {
+        setLoading(false);
+        setRuntimePhase("stopped");
+        setSwitchStatus("Restarting as administrator for TUN mode...");
+        await syncTrayConnectionState(false);
+        await requestElevation();
+        return;
+      }
+
       setLoading(true);
       setError(null);
       setRuntimePhase("starting");
@@ -417,6 +534,16 @@ export function useSingbox() {
           setError(firstError?.message || "Startup health check failed");
           setSwitchStatus(null);
           setLoading(false);
+          return;
+        }
+        const tunRequiresElevation = Boolean(
+          health?.items.some((item) => item.key === "tun" && item.status === "warn")
+        );
+        if (tunRequiresElevation && isElevated === false) {
+          setRuntimePhase("stopped");
+          setSwitchStatus("Restarting as administrator for TUN mode...");
+          await syncTrayConnectionState(false);
+          await requestElevation();
           return;
         }
         if (selectedOutboundTag) {
@@ -456,11 +583,12 @@ export function useSingbox() {
       setSwitchStatus(null);
       setError(String(err));
     } finally {
+      startProxyInFlightRef.current = false;
       if (!awaitingRuntimeReady) {
         setLoading(false);
       }
     }
-  }, [selectedOutboundTag, hasConfig, loadProfiles, loadRuntimeDebug, loadStartupHealth, showTransientSwitchStatus]);
+  }, [selectedOutboundTag, hasConfig, isElevated, loadProfiles, loadRuntimeDebug, loadStartupHealth, requestElevation, showTransientSwitchStatus, syncTrayConnectionState, tunNeedsElevation]);
 
   const stopProxy = useCallback(async () => {
     try {
@@ -560,6 +688,42 @@ export function useSingbox() {
     };
   }, [checkStatus, loadActiveOutbound, loadRuntimeDebug, syncTrayConnectionState]);
 
+  // Handle elevation intent — auto-connect after admin restart
+  useEffect(() => {
+    if (isElevated !== true || !hasConfig) {
+      return;
+    }
+
+    (async () => {
+      try {
+        const shouldAutoConnect = await invoke<boolean>("check_elevation_intent");
+        if (shouldAutoConnect) {
+          // App restarted as admin — auto-connect
+          await startProxy();
+        }
+      } catch (err) {
+        console.error("Failed to handle elevation intent:", err);
+      }
+    })();
+  }, [hasConfig, isElevated, startProxy]);
+
+  useEffect(() => {
+    if (!tunNeedsElevation) {
+      return;
+    }
+
+    setLoading(false);
+    setIsRunning(false);
+    setProxyEnabled(false);
+    setError(null);
+    setRuntimePhase((current) =>
+      current === "starting" || current === "error" ? "stopped" : current
+    );
+    setSwitchStatus((current) =>
+      current?.includes("administrator") ? current : "Administrator restart required for TUN mode"
+    );
+  }, [tunNeedsElevation]);
+
   return {
     nodes,
     profiles,
@@ -569,12 +733,16 @@ export function useSingbox() {
     proxyEnabled,
     runtimePhase,
     selectedOutboundTag,
+    pendingOutboundTag,
     runtimeDebug,
     startupHealth,
+    tunNeedsElevation,
     hasConfig,
     loading,
     switchStatus,
     error,
+    isElevated,
+    requestElevation,
     setSelectedOutboundTag: selectOutboundTag,
     addNode,
     updateNode,

@@ -20,6 +20,7 @@ interface ConfigOverviewPanelProps {
   overview: ConfigOverview;
   onEditRouteRule: (index: number, rule: RouteRuleInfo) => void;
   selectedOutboundTag: string | null;
+  pendingOutboundTag?: string | null;
   onSelectOutbound?: (tag: string) => void;
   runtimeDebug?: RuntimeDebugSnapshot | null;
   isRunning?: boolean;
@@ -32,6 +33,7 @@ function ConfigOverviewPanel({
   overview,
   onEditRouteRule,
   selectedOutboundTag,
+  pendingOutboundTag = null,
   onSelectOutbound,
   runtimeDebug,
   isRunning = false,
@@ -59,7 +61,7 @@ function ConfigOverviewPanel({
   const routeDisplay = actualRuntimeRoute || activeOutbound?.tag || "auto";
   const rulesWithOutbound = overview.route_rules.filter((rule) => rule.outbound).length;
 
-  const isRuntimeTransitioning = runtimePhase === "starting" || runtimePhase === "switching" || runtimePhase === "stopping";
+  const isRuntimeTransitioning = runtimePhase === "starting" || runtimePhase === "stopping";
   const runtimeGroupTag = runtimeDebug?.top_selector_default || null;
   const runtimeLeafTag = runtimeDebug?.active_leaf_outbound || null;
 
@@ -272,7 +274,7 @@ function ConfigOverviewPanel({
               items={groups.map((group) => {
                 const isLiveGroup = isRunning && !isRuntimeTransitioning && runtimeGroupTag === group.tag;
                 const isSelected = selectedOutboundTag === group.tag;
-                const isSwitching = runtimePhase === "switching" && selectedOutboundTag === group.tag;
+                const isSwitching = runtimePhase === "switching" && pendingOutboundTag === group.tag;
                 return {
                   key: group.tag,
                   label: group.tag,
@@ -339,7 +341,7 @@ function ConfigOverviewPanel({
               items={proxyNodes.map((node) => {
                 const isLiveNode = isRunning && !isRuntimeTransitioning && runtimeLeafTag === node.tag;
                 const isSelected = selectedOutboundTag === node.tag;
-                const isSwitching = runtimePhase === "switching" && selectedOutboundTag === node.tag;
+                const isSwitching = runtimePhase === "switching" && pendingOutboundTag === node.tag;
                 return {
                   key: node.tag,
                   label: node.tag,

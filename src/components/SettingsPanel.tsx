@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRightLeft, Database, Globe, Loader2, Power, Shield, Settings2, Check } from "lucide-react";
+import { Activity, ArrowRightLeft, Database, Globe, Loader2, Power, Shield, Settings2, Check } from "lucide-react";
 import { AppSettings } from "../types";
 
 interface SettingsPanelProps {
   onSaved: () => Promise<void>;
 }
 
-type SettingsSection = "inbound" | "ruleSets" | "tun" | "dns";
+type SettingsSection = "inbound" | "ruleSets" | "tun" | "dns" | "latency";
 
 const defaultSettings: AppSettings = {
   autostart_enabled: false,
@@ -25,6 +25,10 @@ const defaultSettings: AppSettings = {
   dns_final: "google",
   dns_strategy: "auto",
   dns_servers: [],
+  latency_test_url: "https://www.gstatic.com/generate_204",
+  latency_timeout_ms: 5000,
+  latency_concurrency: 16,
+  latency_auto_test: true,
 };
 
 function SettingsPanel({ onSaved }: SettingsPanelProps) {
@@ -44,6 +48,7 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
     { id: "ruleSets", label: "Rule Sets", icon: <Database size={15} /> },
     { id: "tun", label: "TUN", icon: <Shield size={15} /> },
     { id: "dns", label: "DNS", icon: <Globe size={15} /> },
+    { id: "latency", label: "Latency", icon: <Activity size={15} /> },
   ];
 
   const settingsInsights = [
@@ -246,6 +251,28 @@ function SettingsPanel({ onSaved }: SettingsPanelProps) {
                 <textarea value={dnsServersText} onChange={(e) => setDnsServersText(e.target.value)}
                   rows={10} className="input min-h-56 resize-y font-mono text-xs" />
               </Field>
+            </section>
+          )}
+
+          {activeSection === "latency" && (
+            <section className="space-y-5">
+              <SectionHeader title="Latency" subtitle="End-to-end URL testing through each proxy outbound." />
+              <ToggleRow label="Auto test when entering Nodes" checked={settings.latency_auto_test}
+                onChange={(checked) => updateSetting("latency_auto_test", checked)} />
+              <Field label="Test URL">
+                <input type="url" value={settings.latency_test_url}
+                  onChange={(e) => updateSetting("latency_test_url", e.target.value)} className="input" />
+              </Field>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Timeout (ms)">
+                  <input type="number" min={1000} max={30000} value={settings.latency_timeout_ms}
+                    onChange={(e) => updateSetting("latency_timeout_ms", Number(e.target.value))} className="input" />
+                </Field>
+                <Field label="Concurrency">
+                  <input type="number" min={1} max={32} value={settings.latency_concurrency}
+                    onChange={(e) => updateSetting("latency_concurrency", Number(e.target.value))} className="input" />
+                </Field>
+              </div>
             </section>
           )}
         </div>

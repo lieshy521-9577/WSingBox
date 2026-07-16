@@ -114,6 +114,32 @@ pub struct CoreRuntimeInfo {
     pub tun_enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeOutboundSwitchRequest {
+    pub target_tag: String,
+    #[serde(default = "default_close_affected_connections")]
+    pub close_affected_connections: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeOutboundSwitchResult {
+    pub requested_tag: String,
+    pub active_tag: String,
+    pub switched_live: bool,
+    pub closed_connections: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct OutboundSelectionPlan {
+    selector_path: Vec<(String, String)>,
+    active_tag: String,
+}
+
+static OUTBOUND_SWITCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Persistent client settings applied to imported/generated configs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -132,6 +158,14 @@ pub struct AppSettings {
     pub dns_final: String,
     pub dns_strategy: String,
     pub dns_servers: Vec<serde_json::Value>,
+    #[serde(default = "default_latency_test_url")]
+    pub latency_test_url: String,
+    #[serde(default = "default_latency_timeout_ms")]
+    pub latency_timeout_ms: u64,
+    #[serde(default = "default_latency_concurrency")]
+    pub latency_concurrency: u8,
+    #[serde(default = "default_latency_auto_test")]
+    pub latency_auto_test: bool,
 }
 
 /// Saved imported config profile metadata
@@ -189,6 +223,26 @@ fn default_dns_servers() -> Vec<serde_json::Value> {
     ]
 }
 
+fn default_latency_test_url() -> String {
+    "https://www.gstatic.com/generate_204".to_string()
+}
+
+fn default_latency_timeout_ms() -> u64 {
+    5_000
+}
+
+fn default_latency_concurrency() -> u8 {
+    16
+}
+
+fn default_latency_auto_test() -> bool {
+    true
+}
+
+fn default_close_affected_connections() -> bool {
+    true
+}
+
 fn default_app_settings() -> AppSettings {
     AppSettings {
         autostart_enabled: false,
@@ -206,6 +260,10 @@ fn default_app_settings() -> AppSettings {
         dns_final: "google".to_string(),
         dns_strategy: "auto".to_string(),
         dns_servers: default_dns_servers(),
+        latency_test_url: default_latency_test_url(),
+        latency_timeout_ms: default_latency_timeout_ms(),
+        latency_concurrency: default_latency_concurrency(),
+        latency_auto_test: default_latency_auto_test(),
     }
 }
 
@@ -854,75 +912,130 @@ pub async fn set_active_outbound(target_tag: String) -> Result<String, String> {
         fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))?;
     let mut config: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
-
-    let profiles = extract_profiles(&config);
-    let nodes = extract_nodes_from_config(&config);
-    if !profiles.iter().any(|p| p.tag == target_tag) && !nodes.iter().any(|n| n.id == target_tag) {
-        return Err(format!(
-            "Outbound '{}' not found in current config",
-            target_tag
-        ));
-    }
-
-    let top_selector = profiles
-        .iter()
-        .find(|p| p.profile_type == "selector")
-        .or_else(|| profiles.first())
-        .ok_or("No outbound groups found in current config".to_string())?;
-
-    let effective_target = if profiles.iter().any(|profile| profile.tag == target_tag) {
-        resolve_profile_leaf_target(&target_tag, &profiles, &nodes)
-            .unwrap_or_else(|| target_tag.clone())
-    } else {
-        target_tag.clone()
-    };
-
-    if effective_target == top_selector.tag {
-        return Ok(target_tag);
-    }
-
-    if nodes.iter().any(|node| node.id == effective_target)
-        && top_selector
-            .outbounds
-            .iter()
-            .any(|member| member == &effective_target)
-    {
-        set_selector_default(&mut config, &top_selector.tag, &effective_target)?;
-
-        let updated_content = serde_json::to_string_pretty(&config)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        fs::write(&config_path, updated_content)
-            .map_err(|e| format!("Failed to save config: {}", e))?;
-        persist_active_profile_config(&config)?;
-
-        let updated_profiles = extract_profiles(&config);
-        let updated_nodes = extract_nodes_from_config(&config);
-        save_profiles(&updated_profiles)?;
-
-        return Ok(determine_active_outbound(&updated_profiles, &updated_nodes));
-    }
-
-    let path =
-        build_selector_path(&top_selector.tag, &effective_target, &profiles).ok_or_else(|| {
-            format!(
-                "Outbound '{}' is not reachable from selector '{}'",
-                target_tag, top_selector.tag
-            )
-        })?;
-
-    apply_selector_path(&mut config, &path)?;
-
-    let updated_content = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    fs::write(&config_path, updated_content)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-    persist_active_profile_config(&config)?;
-
+    apply_outbound_selection(&mut config, &target_tag)?;
+    persist_outbound_selection(&config)?;
     let updated_profiles = extract_profiles(&config);
     let updated_nodes = extract_nodes_from_config(&config);
-    save_profiles(&updated_profiles)?;
-
     Ok(determine_active_outbound(&updated_profiles, &updated_nodes))
+}
+
+#[tauri::command]
+pub async fn switch_runtime_outbound(
+    request: RuntimeOutboundSwitchRequest,
+) -> Result<RuntimeOutboundSwitchResult, String> {
+    let _switch_guard = OUTBOUND_SWITCH_LOCK.lock().await;
+    let requested_tag = request.target_tag.trim().to_string();
+    if requested_tag.is_empty() {
+        return Err("No outbound target was provided".to_string());
+    }
+
+    let (mut config, profile_id) = load_outbound_selection_config()?;
+    let plan = apply_outbound_selection(&mut config, &requested_tag)?;
+    let running = crate::core_process::is_singbox_running().unwrap_or(false);
+    if !running {
+        persist_outbound_selection(&config)?;
+        return Ok(RuntimeOutboundSwitchResult {
+            requested_tag,
+            active_tag: plan.active_tag,
+            switched_live: false,
+            closed_connections: 0,
+            warnings: Vec::new(),
+        });
+    }
+
+    let state = crate::core_process::load_core_state()?
+        .ok_or("The sing-box runtime state is unavailable".to_string())?;
+    if state.clash_api_url.trim().is_empty() {
+        return Err("Runtime switching is unavailable; reconnect once to initialize the local API"
+            .to_string());
+    }
+    if !state.profile_id.is_empty() && state.profile_id != profile_id {
+        return Err("The running core belongs to a different profile".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(1))
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|e| format!("Failed to create runtime API client: {}", e))?;
+    let selector_tags: std::collections::HashSet<String> = plan
+        .selector_path
+        .iter()
+        .map(|(selector, _)| selector.clone())
+        .collect();
+    let mut warnings = Vec::new();
+    let affected_connections = if request.close_affected_connections && !selector_tags.is_empty() {
+        match get_affected_connection_ids(
+            &client,
+            &state.clash_api_url,
+            &state.clash_api_secret,
+            &selector_tags,
+        )
+        .await
+        {
+            Ok(ids) => ids,
+            Err(error) => {
+                warnings.push(format!("Could not inspect existing connections: {}", error));
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    switch_selector_path_via_api(
+        &client,
+        &state.clash_api_url,
+        &state.clash_api_secret,
+        &plan.selector_path,
+    )
+    .await?;
+
+    match persist_outbound_selection(&config) {
+        Ok(config_fingerprint) => {
+            if let Err(error) = crate::core_process::update_core_config_fingerprint(
+                &profile_id,
+                &config_fingerprint,
+            ) {
+                warnings.push(format!("Selection was saved but runtime metadata was not updated: {}", error));
+            }
+        }
+        Err(error) => warnings.push(format!(
+            "Runtime switched successfully, but the selection could not be saved: {}",
+            error
+        )),
+    }
+
+    let mut connection_tasks = tokio::task::JoinSet::new();
+    for connection_id in affected_connections {
+        let client = client.clone();
+        let base_url = state.clash_api_url.clone();
+        let secret = state.clash_api_secret.clone();
+        connection_tasks.spawn(async move {
+            let result =
+                delete_runtime_connection(&client, &base_url, &secret, &connection_id).await;
+            (connection_id, result)
+        });
+    }
+    let mut closed_connections = 0;
+    while let Some(joined) = connection_tasks.join_next().await {
+        match joined {
+            Ok((_, Ok(()))) => closed_connections += 1,
+            Ok((connection_id, Err(error))) => warnings.push(format!(
+                "Connection '{}' could not be closed: {}",
+                connection_id, error
+            )),
+            Err(error) => warnings.push(format!("A connection cleanup task failed: {}", error)),
+        }
+    }
+
+    Ok(RuntimeOutboundSwitchResult {
+        requested_tag,
+        active_tag: plan.active_tag,
+        switched_live: true,
+        closed_connections,
+        warnings,
+    })
 }
 
 /// Remove an outbound group from the imported config and refresh saved profiles/nodes
@@ -1336,6 +1449,310 @@ fn resolve_profile_leaf_target(
     resolve_profile_leaf_target(default, profiles, nodes)
 }
 
+fn load_outbound_selection_config() -> Result<(serde_json::Value, String), String> {
+    let active_profile_id = load_active_config_profile_id().unwrap_or_default();
+    let (path, profile_id) = if active_profile_id.is_empty() {
+        (
+            crate::app_paths::runtime_config_path(),
+            "__manual__".to_string(),
+        )
+    } else {
+        (
+            get_config_profiles_dir().join(format!("{}.json", active_profile_id)),
+            active_profile_id,
+        )
+    };
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read config for outbound selection: {}", e))?;
+    let config = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config for outbound selection: {}", e))?;
+    Ok((config, profile_id))
+}
+
+fn apply_outbound_selection(
+    config: &mut serde_json::Value,
+    target_tag: &str,
+) -> Result<OutboundSelectionPlan, String> {
+    let profiles = extract_profiles(config);
+    let nodes = extract_nodes_from_config(config);
+    if !profiles.iter().any(|profile| profile.tag == target_tag)
+        && !nodes.iter().any(|node| node.id == target_tag)
+    {
+        return Err(format!(
+            "Outbound '{}' not found in current config",
+            target_tag
+        ));
+    }
+
+    let top_selector = profiles
+        .iter()
+        .find(|profile| profile.profile_type == "selector")
+        .or_else(|| profiles.first())
+        .ok_or("No outbound groups found in current config".to_string())?;
+    let effective_target = if profiles.iter().any(|profile| profile.tag == target_tag) {
+        resolve_profile_leaf_target(target_tag, &profiles, &nodes)
+            .unwrap_or_else(|| target_tag.to_string())
+    } else {
+        target_tag.to_string()
+    };
+
+    let selector_path = if effective_target == top_selector.tag {
+        Vec::new()
+    } else {
+        build_selector_path(&top_selector.tag, &effective_target, &profiles).ok_or_else(|| {
+            format!(
+                "Outbound '{}' is not reachable from selector '{}'",
+                target_tag, top_selector.tag
+            )
+        })?
+    };
+    apply_selector_path(config, &selector_path)?;
+    let active_tag = detect_runtime_active_leaf_outbound(config)
+        .unwrap_or_else(|| effective_target.clone());
+    Ok(OutboundSelectionPlan {
+        selector_path,
+        active_tag,
+    })
+}
+
+fn persist_outbound_selection(config: &serde_json::Value) -> Result<String, String> {
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    fs::write(crate::app_paths::runtime_config_path(), &content)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    persist_active_profile_config(config)?;
+    save_profiles(&extract_profiles(config))?;
+    Ok(super::latency::config_fingerprint(&content))
+}
+
+fn runtime_api_auth(
+    request: reqwest::RequestBuilder,
+    secret: &str,
+) -> reqwest::RequestBuilder {
+    if secret.is_empty() {
+        request
+    } else {
+        request.bearer_auth(secret)
+    }
+}
+
+async fn get_runtime_selector_now(
+    client: &reqwest::Client,
+    base_url: &str,
+    secret: &str,
+    selector: &str,
+) -> Result<String, String> {
+    let encoded = percent_encoding::utf8_percent_encode(
+        selector,
+        percent_encoding::NON_ALPHANUMERIC,
+    );
+    let response = runtime_api_auth(
+        client.get(format!(
+            "{}/proxies/{}",
+            base_url.trim_end_matches('/'),
+            encoded
+        )),
+        secret,
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Selector '{}' could not be read: {}", selector, e))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "Selector '{}' returned HTTP {}: {}",
+            selector,
+            status,
+            body.trim()
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Selector '{}' returned invalid JSON: {}", selector, e))?;
+    value
+        .get("now")
+        .and_then(|item| item.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("Selector '{}' did not report an active outbound", selector))
+}
+
+async fn put_runtime_selector(
+    client: &reqwest::Client,
+    base_url: &str,
+    secret: &str,
+    selector: &str,
+    target: &str,
+) -> Result<(), String> {
+    let encoded = percent_encoding::utf8_percent_encode(
+        selector,
+        percent_encoding::NON_ALPHANUMERIC,
+    );
+    let response = runtime_api_auth(
+        client
+            .put(format!(
+                "{}/proxies/{}",
+                base_url.trim_end_matches('/'),
+                encoded
+            ))
+            .json(&serde_json::json!({ "name": target })),
+        secret,
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Failed to switch selector '{}': {}", selector, e))?;
+    let status = response.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        let body = response.text().await.unwrap_or_default();
+        Err(format!(
+            "Selector '{}' returned HTTP {}: {}",
+            selector,
+            status,
+            body.trim()
+        ))
+    }
+}
+
+async fn rollback_runtime_selectors(
+    client: &reqwest::Client,
+    base_url: &str,
+    secret: &str,
+    applied: &[String],
+    previous: &std::collections::HashMap<String, String>,
+) {
+    for selector in applied.iter().rev() {
+        if let Some(target) = previous.get(selector) {
+            let _ = put_runtime_selector(client, base_url, secret, selector, target).await;
+        }
+    }
+}
+
+async fn switch_selector_path_via_api(
+    client: &reqwest::Client,
+    base_url: &str,
+    secret: &str,
+    path: &[(String, String)],
+) -> Result<(), String> {
+    let mut previous = std::collections::HashMap::new();
+    for (selector, _) in path {
+        previous.insert(
+            selector.clone(),
+            get_runtime_selector_now(client, base_url, secret, selector).await?,
+        );
+    }
+
+    let mut applied = Vec::new();
+    for (selector, target) in path.iter().rev() {
+        if let Err(error) = put_runtime_selector(client, base_url, secret, selector, target).await {
+            rollback_runtime_selectors(client, base_url, secret, &applied, &previous).await;
+            return Err(error);
+        }
+        applied.push(selector.clone());
+        match get_runtime_selector_now(client, base_url, secret, selector).await {
+            Ok(active) if active == *target => {}
+            Ok(active) => {
+                rollback_runtime_selectors(client, base_url, secret, &applied, &previous).await;
+                return Err(format!(
+                    "Selector '{}' remained on '{}' instead of '{}'",
+                    selector, active, target
+                ));
+            }
+            Err(error) => {
+                rollback_runtime_selectors(client, base_url, secret, &applied, &previous).await;
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn affected_connection_ids(
+    payload: &serde_json::Value,
+    selector_tags: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    payload
+        .get("connections")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|connection| {
+            connection
+                .get("chains")
+                .and_then(|value| value.as_array())
+                .map(|chains| {
+                    chains.iter().any(|chain| {
+                        chain
+                            .as_str()
+                            .map(|tag| selector_tags.contains(tag))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .filter_map(|connection| {
+            connection
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+async fn get_affected_connection_ids(
+    client: &reqwest::Client,
+    base_url: &str,
+    secret: &str,
+    selector_tags: &std::collections::HashSet<String>,
+) -> Result<Vec<String>, String> {
+    let response = runtime_api_auth(
+        client.get(format!(
+            "{}/connections",
+            base_url.trim_end_matches('/')
+        )),
+        secret,
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Failed to read runtime connections: {}", e))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, body.trim()));
+    }
+    let payload = serde_json::from_str(&body)
+        .map_err(|e| format!("Runtime connections returned invalid JSON: {}", e))?;
+    Ok(affected_connection_ids(&payload, selector_tags))
+}
+
+async fn delete_runtime_connection(
+    client: &reqwest::Client,
+    base_url: &str,
+    secret: &str,
+    connection_id: &str,
+) -> Result<(), String> {
+    let encoded = percent_encoding::utf8_percent_encode(
+        connection_id,
+        percent_encoding::NON_ALPHANUMERIC,
+    );
+    let response = runtime_api_auth(
+        client.delete(format!(
+            "{}/connections/{}",
+            base_url.trim_end_matches('/'),
+            encoded
+        )),
+        secret,
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Failed to close connection: {}", e))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", response.status()))
+    }
+}
+
 fn build_selector_path(
     root_tag: &str,
     target_tag: &str,
@@ -1359,15 +1776,14 @@ fn build_selector_path(
                     path.append(&mut child_path);
                     return Some(path);
                 }
-            } else if child_profile.profile_type == "urltest" {
-                if child_profile.tag == target_tag
+            } else if child_profile.profile_type == "urltest"
+                && (child_profile.tag == target_tag
                     || child_profile
                         .outbounds
                         .iter()
-                        .any(|member| member == target_tag)
-                {
-                    return Some(vec![(root_tag.to_string(), child_profile.tag.clone())]);
-                }
+                        .any(|member| member == target_tag))
+            {
+                return Some(vec![(root_tag.to_string(), child_profile.tag.clone())]);
             }
         }
     }
@@ -2213,7 +2629,7 @@ fn derive_config_profile_name(source_path: &str) -> String {
 
         if let Some(last_segment) = url
             .path_segments()
-            .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+            .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
         {
             let stem = Path::new(last_segment)
                 .file_stem()
@@ -2406,6 +2822,10 @@ fn load_app_settings() -> Result<AppSettings, String> {
     Ok(settings)
 }
 
+pub(crate) fn load_app_settings_or_default() -> AppSettings {
+    load_app_settings().unwrap_or_else(|_| default_app_settings())
+}
+
 fn save_app_settings_file(settings: &AppSettings) -> Result<(), String> {
     let content = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
@@ -2502,6 +2922,11 @@ fn normalize_app_settings(settings: &mut AppSettings) {
         settings.dns_strategy = "auto".to_string();
     }
     normalize_dns_server_detours(&mut settings.dns_servers);
+    if settings.latency_test_url.trim().is_empty() {
+        settings.latency_test_url = default_latency_test_url();
+    }
+    settings.latency_timeout_ms = settings.latency_timeout_ms.clamp(1_000, 30_000);
+    settings.latency_concurrency = settings.latency_concurrency.clamp(1, 32);
 }
 
 fn is_auto_dns_strategy(value: &str) -> bool {
@@ -2668,7 +3093,7 @@ fn sync_autostart(enabled: bool) -> Result<(), String> {
         } else {
             let _ = run_key.delete_value("SingBox Client");
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -2755,25 +3180,6 @@ fn sanitize_config_for_v1_12(mut config: serde_json::Value) -> serde_json::Value
             }
         }
 
-        if let Some(rule_sets) = route.get_mut("rule_set").and_then(|r| r.as_array_mut()) {
-            for rule_set in rule_sets.iter_mut() {
-                let is_remote = rule_set
-                    .get("type")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value == "remote")
-                    .unwrap_or(false);
-                if !is_remote {
-                    continue;
-                }
-
-                if let Some(obj) = rule_set.as_object_mut() {
-                    obj.insert(
-                        "download_detour".to_string(),
-                        serde_json::Value::String("direct".to_string()),
-                    );
-                }
-            }
-        }
     }
 
     if let Some(outbounds) = config.get_mut("outbounds").and_then(|o| o.as_array_mut()) {
@@ -3006,5 +3412,167 @@ fn push_unique_string(items: &mut Vec<serde_json::Value>, value: String) {
         .any(|item| item.as_str() == Some(value.as_str()));
     if !exists {
         items.push(serde_json::Value::String(value));
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_receive_latency_defaults() {
+        let old = serde_json::json!({
+            "autostart_enabled": false,
+            "tun_enabled": false,
+            "mixed_listen": "127.0.0.1",
+            "mixed_port": 7890,
+            "tun_interface_name": "singbox",
+            "tun_mtu": 9000,
+            "tun_stack": "mixed",
+            "tun_auto_route": true,
+            "tun_strict_route": true,
+            "tun_sniff": true,
+            "tun_sniff_override_destination": true,
+            "tun_address": ["172.19.0.1/30"],
+            "dns_final": "google",
+            "dns_strategy": "auto",
+            "dns_servers": [],
+            "latency_cache_ttl_secs": 600
+        });
+        let parsed: AppSettings = serde_json::from_value(old).unwrap();
+        assert_eq!(parsed.latency_test_url, default_latency_test_url());
+        assert_eq!(parsed.latency_timeout_ms, 5_000);
+        assert_eq!(parsed.latency_concurrency, 16);
+        assert!(parsed.latency_auto_test);
+        assert!(
+            serde_json::to_value(parsed)
+                .unwrap()
+                .get("latency_cache_ttl_secs")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn outbound_selection_updates_nested_selectors_and_resolves_leaf() {
+        let mut config = serde_json::json!({
+            "outbounds": [
+                { "type": "selector", "tag": "proxy", "outbounds": ["region"], "default": "region" },
+                { "type": "selector", "tag": "region", "outbounds": ["node-a", "node-b"], "default": "node-a" },
+                { "type": "vless", "tag": "node-a", "server": "a.example", "server_port": 443 },
+                { "type": "vless", "tag": "node-b", "server": "b.example", "server_port": 443 }
+            ]
+        });
+
+        let plan = apply_outbound_selection(&mut config, "node-b").unwrap();
+
+        assert_eq!(
+            plan.selector_path,
+            vec![
+                ("proxy".to_string(), "region".to_string()),
+                ("region".to_string(), "node-b".to_string())
+            ]
+        );
+        assert_eq!(plan.active_tag, "node-b");
+        assert_eq!(config["outbounds"][1]["default"], "node-b");
+    }
+
+    #[test]
+    fn affected_connections_only_include_switched_selector_chains() {
+        let payload = serde_json::json!({
+            "connections": [
+                { "id": "one", "chains": ["node-a", "region", "proxy"] },
+                { "id": "two", "chains": ["direct"] },
+                { "id": "three", "chains": ["other", "proxy"] }
+            ]
+        });
+        let selectors = std::collections::HashSet::from([
+            "proxy".to_string(),
+            "region".to_string(),
+        ]);
+
+        assert_eq!(
+            affected_connection_ids(&payload, &selectors),
+            vec!["one".to_string(), "three".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_selector_switch_is_authenticated_and_verified() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let selected = std::sync::Arc::new(tokio::sync::Mutex::new("node-a".to_string()));
+        let unauthorized = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_selected = std::sync::Arc::clone(&selected);
+        let server_unauthorized = std::sync::Arc::clone(&unauthorized);
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 2048];
+                loop {
+                    let read = socket.read(&mut buffer).await.unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    let Some(header_end) = request.windows(4).position(|item| item == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().to_string())
+                        })
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                }
+
+                let text = String::from_utf8_lossy(&request);
+                if !text.to_ascii_lowercase().contains("authorization: bearer secret") {
+                    server_unauthorized.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                let request_line = text.lines().next().unwrap_or_default();
+                if request_line.starts_with("PUT ") {
+                    if let Some(body_start) = request.windows(4).position(|item| item == b"\r\n\r\n") {
+                        let body = &request[body_start + 4..];
+                        let payload: serde_json::Value = serde_json::from_slice(body).unwrap();
+                        *server_selected.lock().await = payload["name"].as_str().unwrap().to_string();
+                    }
+                    socket
+                        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await
+                        .unwrap();
+                } else {
+                    let body = serde_json::json!({ "now": server_selected.lock().await.clone() }).to_string();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(), body
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                }
+            }
+        });
+
+        let client = reqwest::Client::new();
+        switch_selector_path_via_api(
+            &client,
+            &format!("http://{}", address),
+            "secret",
+            &[("proxy".to_string(), "node-b".to_string())],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(*selected.lock().await, "node-b");
+        assert!(!unauthorized.load(std::sync::atomic::Ordering::SeqCst));
+        server.abort();
     }
 }

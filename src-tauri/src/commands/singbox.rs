@@ -40,15 +40,8 @@ pub struct RuntimeReconcileSnapshot {
 
 /// Start sing-box core process with elevation (admin privileges for TUN)
 #[tauri::command]
-pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
-    let _ = app_handle.emit(
-        "core-starting",
-        CoreEventPayload {
-            status: "starting".to_string(),
-            message: "Starting sing-box...".to_string(),
-        },
-    );
-
+pub fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let _core_operation = core_process::lock_core_operation()?;
     let config_path = app_paths::runtime_config_path();
     let bootstrap_config_path = app_paths::runtime_bootstrap_config_path();
 
@@ -65,16 +58,53 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
         return Err(message);
     }
 
-    prepare_runtime_config_for_bootstrap(&config_path.to_string_lossy())?;
+    if core_process::is_singbox_running().unwrap_or(false) {
+        let existing_config_path = core_process::load_core_state()
+            .ok()
+            .flatten()
+            .map(|state| state.config_path)
+            .filter(|path| std::path::Path::new(path).exists())
+            .unwrap_or_else(|| config_path.to_string_lossy().to_string());
+
+        if let Ok((host, port)) = get_mixed_inbound_endpoint(&existing_config_path) {
+            if is_tcp_endpoint_open(&host, port, Duration::from_millis(350)) {
+                let proxy_applied = set_system_proxy_internal(&host, port)?;
+                let _ = apply_tray_icon(&app_handle, true);
+                let message = if proxy_applied {
+                    "sing-box is already running".to_string()
+                } else {
+                    "sing-box is already running; existing system proxy was left unchanged"
+                        .to_string()
+                };
+                let _ = app_handle.emit(
+                    "core-ready",
+                    CoreEventPayload {
+                        status: "ready".to_string(),
+                        message: message.clone(),
+                    },
+                );
+                return Ok(message);
+            }
+        }
+
+        core_process::stop_singbox_process()?;
+    }
+
+    let _ = app_handle.emit(
+        "core-starting",
+        CoreEventPayload {
+            status: "starting".to_string(),
+            message: "Starting sing-box...".to_string(),
+        },
+    );
+
+    prepare_runtime_config_for_launch(&config_path.to_string_lossy())?;
     let _ = fs::remove_file(&bootstrap_config_path);
+    let prepared_launch = crate::commands::latency::prepare_runtime_launch_config(&config_path)?;
+    let launch_config_path = prepared_launch.path;
+    let api_metadata = prepared_launch.api;
 
     let singbox_path = core_process::find_singbox_binary_with_app(&app_handle)?;
-    if core_process::load_core_state().ok().flatten().is_some()
-        || core_process::is_singbox_running().unwrap_or(false)
-    {
-        let _ = core_process::stop_singbox_process();
-        thread::sleep(Duration::from_millis(400));
-    }
     core_process::clear_core_state().ok();
     core_process::clear_core_pid().ok();
 
@@ -83,88 +113,77 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
     let tun_enabled = config_has_tun_inbound(&config_path.to_string_lossy())?;
     let log_path = get_runtime_log_file_path();
     let (proxy_host, proxy_port) = get_mixed_inbound_endpoint(&config_path.to_string_lossy())?;
-    let mut started_with_fallback = false;
-    let mut started = false;
-    let mut startup_config_path = config_path.to_string_lossy().to_string();
-
-    if build_rule_set_bootstrap_config(
-        &config_path.to_string_lossy(),
-        &bootstrap_config_path.to_string_lossy(),
-        Some("direct"),
-    )? {
-        startup_config_path = bootstrap_config_path.to_string_lossy().to_string();
+    if is_tcp_endpoint_open(&proxy_host, proxy_port, Duration::from_millis(250)) {
+        let message = format!(
+            "Cannot start sing-box: mixed inbound {}:{} is already in use by another process.",
+            proxy_host, proxy_port
+        );
+        let _ = app_handle.emit(
+            "core-failed",
+            CoreEventPayload {
+                status: "failed".to_string(),
+                message: message.clone(),
+            },
+        );
+        return Err(message);
     }
 
-    launch_singbox_with_config(&singbox_path, &startup_config_path, &log_path, tun_enabled)?;
+    let remote_rule_set_count = count_remote_rule_sets(&launch_config_path.to_string_lossy());
+    if remote_rule_set_count > 0 {
+        let _ = app_handle.emit(
+            "core-starting",
+            CoreEventPayload {
+                status: "starting".to_string(),
+                message: format!(
+                    "Loading {} remote rule set{}...",
+                    remote_rule_set_count,
+                    if remote_rule_set_count == 1 { "" } else { "s" }
+                ),
+            },
+        );
+    }
 
-    if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
-        started = true;
+    launch_singbox_with_config(
+        &singbox_path,
+        &launch_config_path.to_string_lossy(),
+        &log_path,
+        tun_enabled,
+        &api_metadata,
+    )?;
+
+    let startup_timeout = if remote_rule_set_count > 0 {
+        Duration::from_secs(60)
     } else {
-        let details = get_runtime_start_failure_details().unwrap_or_default();
-        let has_remote_rule_sets = config_has_remote_rule_sets(&config_path.to_string_lossy());
-        let should_retry_rule_set_bootstrap =
-            should_retry_without_remote_rule_sets(&details) || has_remote_rule_sets;
-
-        if should_retry_rule_set_bootstrap {
-            let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(
-                &config_path.to_string_lossy(),
-                &bootstrap_config_path.to_string_lossy(),
-            )?;
-            if removed_rule_sets > 0 {
-                // launch_singbox_with_config now includes "kill old + start new"
-                // in a single elevated script — no separate stop needed, only 1 UAC
-                core_process::clear_core_state().ok();
-                core_process::clear_core_pid().ok();
-                clear_runtime_log_file().ok();
-                launch_singbox_with_config(
-                    &singbox_path,
-                    &bootstrap_config_path.to_string_lossy(),
-                    &log_path,
-                    tun_enabled,
-                )?;
-                if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
-                    started_with_fallback = true;
-                    started = true;
-                }
-            }
-        } else if !started {
-            let removed_rule_sets = build_bootstrap_config_without_remote_rule_sets(
-                &config_path.to_string_lossy(),
-                &bootstrap_config_path.to_string_lossy(),
-            )?;
-            if removed_rule_sets > 0 && details.to_ascii_lowercase().contains("rule-set") {
-                core_process::clear_core_state().ok();
-                core_process::clear_core_pid().ok();
-                clear_runtime_log_file().ok();
-                launch_singbox_with_config(
-                    &singbox_path,
-                    &bootstrap_config_path.to_string_lossy(),
-                    &log_path,
-                    tun_enabled,
-                )?;
-                if wait_for_mixed_inbound(&proxy_host, proxy_port, Duration::from_secs(6)) {
-                    started_with_fallback = true;
-                    started = true;
-                }
-            }
-        }
-    }
+        Duration::from_secs(10)
+    };
+    let started = wait_for_mixed_inbound(&proxy_host, proxy_port, startup_timeout);
 
     if !started {
         let details = get_runtime_start_failure_details().unwrap_or_default();
-        if details.is_empty() {
-            let message = "sing-box failed to start. The mixed inbound port did not open in time."
-                .to_string();
-            let _ = app_handle.emit(
-                "core-failed",
-                CoreEventPayload {
-                    status: "failed".to_string(),
-                    message: message.clone(),
-                },
-            );
-            return Err(message);
-        }
-        let message = format!("sing-box failed to start. {}", details);
+        let stop_error = core_process::stop_singbox_process().err();
+        core_process::clear_core_state().ok();
+        core_process::clear_core_pid().ok();
+        let reason = if details.is_empty() {
+            if remote_rule_set_count > 0 {
+                format!(
+                    "{} remote rule set{} did not finish loading within {} seconds",
+                    remote_rule_set_count,
+                    if remote_rule_set_count == 1 { "" } else { "s" },
+                    startup_timeout.as_secs()
+                )
+            } else {
+                format!(
+                    "the mixed inbound port did not open within {} seconds",
+                    startup_timeout.as_secs()
+                )
+            }
+        } else {
+            details
+        };
+        let cleanup_note = stop_error
+            .map(|error| format!(" Cleanup also failed: {}", error))
+            .unwrap_or_default();
+        let message = format!("sing-box failed to start: {}.{}", reason, cleanup_note);
         let _ = app_handle.emit(
             "core-failed",
             CoreEventPayload {
@@ -177,12 +196,16 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
     let proxy_applied = set_system_proxy_internal(&proxy_host, proxy_port)?;
     let _ = apply_tray_icon(&app_handle, true);
-    let message = if started_with_fallback {
-        "sing-box started with remote rule-set bootstrap skipped".to_string()
-    } else if !proxy_applied {
+    let message = if !proxy_applied {
         "sing-box started; existing system proxy was left unchanged".to_string()
     } else if tun_enabled {
         "sing-box started successfully with TUN elevation".to_string()
+    } else if remote_rule_set_count > 0 {
+        format!(
+            "sing-box started successfully with {} rule set{}",
+            remote_rule_set_count,
+            if remote_rule_set_count == 1 { "" } else { "s" }
+        )
     } else {
         "sing-box started successfully".to_string()
     };
@@ -200,7 +223,7 @@ pub async fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, Strin
 
 /// Stop sing-box core process and clear system proxy
 #[tauri::command]
-pub async fn stop_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub fn stop_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
     cleanup_before_exit()?;
     let _ = apply_tray_icon(&app_handle, false);
     let _ = app_handle.emit(
@@ -214,7 +237,7 @@ pub async fn stop_singbox(app_handle: tauri::AppHandle) -> Result<String, String
 }
 
 #[tauri::command]
-pub async fn quit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub fn quit_application(app_handle: tauri::AppHandle) -> Result<(), String> {
     cleanup_before_exit()?;
     let _ = apply_tray_icon(&app_handle, false);
     let _ = app_handle.emit(
@@ -253,8 +276,11 @@ pub async fn set_tray_connection_state(
 }
 
 pub fn cleanup_before_exit() -> Result<(), String> {
+    let _core_operation = core_process::lock_core_operation()?;
     restore_system_proxy_internal()?;
     core_process::stop_singbox_process()?;
+    let _ = fs::remove_file(app_paths::runtime_launch_config_path());
+    let _ = fs::remove_file(app_paths::runtime_bootstrap_config_path());
     Ok(())
 }
 
@@ -583,8 +609,15 @@ fn launch_singbox_with_config(
     config_path: &str,
     log_path: &str,
     tun_enabled: bool,
+    api_metadata: &core_process::CoreApiMetadata,
 ) -> Result<(), String> {
-    core_process::launch_singbox_with_config(singbox_path, config_path, log_path, tun_enabled)
+    core_process::launch_singbox_with_config(
+        singbox_path,
+        config_path,
+        log_path,
+        tun_enabled,
+        api_metadata,
+    )
 }
 
 #[allow(dead_code)]
@@ -596,45 +629,24 @@ fn get_runtime_log_file_path() -> String {
     app_paths::runtime_log_path().to_string_lossy().to_string()
 }
 
-fn prepare_runtime_config_for_bootstrap(config_path: &str) -> Result<(), String> {
+fn prepare_runtime_config_for_launch(config_path: &str) -> Result<(), String> {
     let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read config for bootstrap preparation: {}", e))?;
+        .map_err(|e| format!("Failed to read config for launch preparation: {}", e))?;
     let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config for bootstrap preparation: {}", e))?;
+        .map_err(|e| format!("Failed to parse config for launch preparation: {}", e))?;
 
-    let changed_dns = sanitize_runtime_dns_for_bootstrap(&mut config);
-    let selected_outbound = detect_selected_outbound_tag(&config);
-    let changed_dns_detour = align_runtime_dns_detours(&mut config, selected_outbound.as_deref());
-    let mut changed = changed_dns || changed_dns_detour;
-
-    if let Some(rule_sets) = config
-        .get_mut("route")
-        .and_then(|route| route.get_mut("rule_set"))
-        .and_then(|value| value.as_array_mut())
-    {
-        for rule_set in rule_sets {
-            let is_remote = rule_set.get("type").and_then(|value| value.as_str()) == Some("remote");
-            if !is_remote {
-                continue;
-            }
-
-            if let Some(obj) = rule_set.as_object_mut() {
-                if obj.get("download_detour").and_then(|value| value.as_str()) != Some("direct") {
-                    obj.insert(
-                        "download_detour".to_string(),
-                        serde_json::Value::String("direct".to_string()),
-                    );
-                    changed = true;
-                }
-            }
-        }
-    }
+    let changed_dns = sanitize_runtime_dns_for_launch(&mut config);
+    let runtime_detour = detect_runtime_detour_tag(&config);
+    let changed_dns_detour = align_runtime_dns_detours(&mut config, runtime_detour.as_deref());
+    let changed_rule_set_detour =
+        align_runtime_rule_set_detours(&mut config, runtime_detour.as_deref());
+    let changed = changed_dns || changed_dns_detour || changed_rule_set_detour;
 
     if changed {
         let updated = serde_json::to_string_pretty(&config)
-            .map_err(|e| format!("Failed to serialize bootstrap-prepared config: {}", e))?;
+            .map_err(|e| format!("Failed to serialize launch-prepared config: {}", e))?;
         fs::write(config_path, updated)
-            .map_err(|e| format!("Failed to save bootstrap-prepared config: {}", e))?;
+            .map_err(|e| format!("Failed to save launch-prepared config: {}", e))?;
     }
 
     Ok(())
@@ -646,7 +658,7 @@ fn align_runtime_dns_detours(
 ) -> bool {
     let outbound_tags = collect_outbound_tags(config);
     let valid_selected = selected_outbound
-        .filter(|tag| outbound_tags.contains(*tag))
+        .filter(|tag| *tag != "direct" && *tag != "block" && outbound_tags.contains(*tag))
         .map(str::to_string);
     let Some(servers) = config
         .get_mut("dns")
@@ -667,13 +679,7 @@ fn align_runtime_dns_detours(
             .and_then(|value| value.as_str())
             .unwrap_or_default();
         if tag == "local" {
-            if obj.get("detour").and_then(|value| value.as_str()) != Some("direct") {
-                obj.insert(
-                    "detour".to_string(),
-                    serde_json::Value::String("direct".to_string()),
-                );
-                changed = true;
-            }
+            changed |= obj.remove("detour").is_some();
             continue;
         }
 
@@ -706,6 +712,67 @@ fn align_runtime_dns_detours(
     changed
 }
 
+fn align_runtime_rule_set_detours(
+    config: &mut serde_json::Value,
+    selected_outbound: Option<&str>,
+) -> bool {
+    let outbound_tags = collect_outbound_tags(config);
+    let direct_selected = selected_outbound == Some("direct");
+    let preferred_detour = selected_outbound
+        .filter(|tag| {
+            *tag != "direct" && *tag != "block" && outbound_tags.contains(*tag)
+        })
+        .map(str::to_string);
+    let Some(rule_sets) = config
+        .get_mut("route")
+        .and_then(|route| route.get_mut("rule_set"))
+        .and_then(|value| value.as_array_mut())
+    else {
+        return false;
+    };
+
+    let mut changed = false;
+    for rule_set in rule_sets {
+        if rule_set.get("type").and_then(|value| value.as_str()) != Some("remote") {
+            continue;
+        }
+        let Some(obj) = rule_set.as_object_mut() else {
+            continue;
+        };
+
+        let existing_detour = obj
+            .get("download_detour")
+            .and_then(|value| value.as_str())
+            .filter(|tag| {
+                *tag != "direct" && *tag != "block" && outbound_tags.contains(*tag)
+            })
+            .map(str::to_string);
+        let detour = if direct_selected {
+            None
+        } else {
+            preferred_detour.clone().or(existing_detour)
+        };
+        match detour {
+            Some(detour) => {
+                if obj.get("download_detour").and_then(|value| value.as_str())
+                    != Some(detour.as_str())
+                {
+                    obj.insert(
+                        "download_detour".to_string(),
+                        serde_json::Value::String(detour),
+                    );
+                    changed = true;
+                }
+            }
+            None => {
+                changed |= obj.remove("download_detour").is_some();
+            }
+        }
+    }
+
+    changed
+}
+
 fn collect_outbound_tags(config: &serde_json::Value) -> std::collections::HashSet<String> {
     config
         .get("outbounds")
@@ -724,7 +791,7 @@ fn collect_outbound_tags(config: &serde_json::Value) -> std::collections::HashSe
         .unwrap_or_default()
 }
 
-fn sanitize_runtime_dns_for_bootstrap(config: &mut serde_json::Value) -> bool {
+fn sanitize_runtime_dns_for_launch(config: &mut serde_json::Value) -> bool {
     let Some(dns) = config.get_mut("dns") else {
         return false;
     };
@@ -768,39 +835,13 @@ fn sanitize_runtime_dns_for_bootstrap(config: &mut serde_json::Value) -> bool {
         .and_then(|value| value.as_array_mut())
     {
         for server in servers {
+            changed |= migrate_legacy_dns_server(server);
             let Some(obj) = server.as_object_mut() else {
                 continue;
             };
 
-            let is_google_tls = obj.get("tag").and_then(|value| value.as_str()) == Some("google")
-                && obj.get("address").and_then(|value| value.as_str()) == Some("tls://8.8.8.8");
-            let is_ali_doh = obj.get("tag").and_then(|value| value.as_str()) == Some("local")
-                && obj.get("address").and_then(|value| value.as_str())
-                    == Some("https://223.5.5.5/dns-query");
-            let is_local = obj.get("tag").and_then(|value| value.as_str()) == Some("local");
-
-            if is_google_tls {
-                obj.insert(
-                    "address".to_string(),
-                    serde_json::Value::String("tcp://8.8.8.8".to_string()),
-                );
-                changed = true;
-            }
-
-            if is_ali_doh {
-                obj.insert(
-                    "address".to_string(),
-                    serde_json::Value::String("223.5.5.5".to_string()),
-                );
-                changed = true;
-            }
-
-            if is_local && obj.get("detour").and_then(|value| value.as_str()) != Some("direct") {
-                obj.insert(
-                    "detour".to_string(),
-                    serde_json::Value::String("direct".to_string()),
-                );
-                changed = true;
+            if obj.get("tag").and_then(|value| value.as_str()) == Some("local") {
+                changed |= obj.remove("detour").is_some();
             }
         }
     }
@@ -808,6 +849,87 @@ fn sanitize_runtime_dns_for_bootstrap(config: &mut serde_json::Value) -> bool {
     changed |= ensure_runtime_default_domain_resolver(config);
 
     changed
+}
+
+fn migrate_legacy_dns_server(server: &mut serde_json::Value) -> bool {
+    let Some(obj) = server.as_object_mut() else {
+        return false;
+    };
+    if obj.contains_key("type") {
+        return false;
+    }
+    let Some(address) = obj
+        .get("address")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return false;
+    };
+
+    if address == "local" {
+        obj.remove("address");
+        obj.insert(
+            "type".to_string(),
+            serde_json::Value::String("local".to_string()),
+        );
+        return true;
+    }
+
+    let (server_type, endpoint, path) = if let Some((scheme, endpoint)) = address.split_once("://") {
+        if matches!(scheme, "udp" | "tcp" | "tls" | "quic") {
+            (scheme, endpoint, None)
+        } else if matches!(scheme, "https" | "h3") {
+            let (authority, path) = endpoint
+                .split_once('/')
+                .map(|(authority, path)| (authority, Some(format!("/{}", path))))
+                .unwrap_or((endpoint, None));
+            (scheme, authority, path)
+        } else {
+            return false;
+        }
+    } else if !address.contains('/') {
+        ("udp", address.as_str(), None)
+    } else {
+        return false;
+    };
+    let (host, port) = split_dns_server_endpoint(endpoint);
+    if host.is_empty() {
+        return false;
+    }
+
+    obj.remove("address");
+    obj.insert(
+        "type".to_string(),
+        serde_json::Value::String(server_type.to_string()),
+    );
+    obj.insert(
+        "server".to_string(),
+        serde_json::Value::String(host),
+    );
+    if let Some(port) = port {
+        obj.insert(
+            "server_port".to_string(),
+            serde_json::Value::Number(port.into()),
+        );
+    }
+    if let Some(path) = path {
+        obj.insert("path".to_string(), serde_json::Value::String(path));
+    }
+    true
+}
+
+fn split_dns_server_endpoint(endpoint: &str) -> (String, Option<u16>) {
+    if let Ok(socket) = endpoint.parse::<std::net::SocketAddr>() {
+        return (socket.ip().to_string(), Some(socket.port()));
+    }
+    if let Some((host, port)) = endpoint.rsplit_once(':') {
+        if !host.contains(':') {
+            if let Ok(port) = port.parse::<u16>() {
+                return (host.to_string(), Some(port));
+            }
+        }
+    }
+    (endpoint.trim_matches(['[', ']']).to_string(), None)
 }
 
 fn rule_routes_any_outbound(rule: &serde_json::Value) -> bool {
@@ -867,8 +989,20 @@ fn ensure_runtime_default_domain_resolver(config: &mut serde_json::Value) -> boo
     true
 }
 
-fn detect_selected_outbound_tag(config: &serde_json::Value) -> Option<String> {
+fn detect_runtime_detour_tag(config: &serde_json::Value) -> Option<String> {
     let outbounds = config.get("outbounds")?.as_array()?;
+    if let Some(final_tag) = config
+        .get("route")
+        .and_then(|route| route.get("final"))
+        .and_then(|value| value.as_str())
+    {
+        if outbounds.iter().any(|outbound| {
+            outbound.get("tag").and_then(|value| value.as_str()) == Some(final_tag)
+        }) {
+            return Some(final_tag.to_string());
+        }
+    }
+
     let selector = outbounds
         .iter()
         .find(|outbound| outbound.get("type").and_then(|value| value.as_str()) == Some("selector"))
@@ -881,104 +1015,19 @@ fn detect_selected_outbound_tag(config: &serde_json::Value) -> Option<String> {
             })
         })?;
 
-    let preferred = selector
-        .get("default")
+    selector
+        .get("tag")
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
-
-    let candidate = preferred.or_else(|| {
-        selector
-            .get("outbounds")
-            .and_then(|value| value.as_array())
-            .and_then(|members| {
-                members
-                    .iter()
-                    .find_map(|member| member.as_str().map(str::to_string))
-            })
-    })?;
-
-    Some(candidate)
+        .map(str::to_string)
 }
 
-fn should_retry_without_remote_rule_sets(details: &str) -> bool {
-    let lower = details.to_ascii_lowercase();
-    lower.contains("rule-set")
-        && (lower.contains("initialize rule-set")
-            || lower.contains("download")
-            || lower.contains("eof")
-            || lower.contains("timeout")
-            || lower.contains("tls")
-            || lower.contains("connection reset")
-            || lower.contains("no such host"))
-}
-
-fn build_rule_set_bootstrap_config(
-    config_path: &str,
-    output_path: &str,
-    download_detour: Option<&str>,
-) -> Result<bool, String> {
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read config for rule-set bootstrap: {}", e))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config for rule-set bootstrap: {}", e))?;
-
-    let Some(rule_sets) = config
-        .get_mut("route")
-        .and_then(|route| route.get_mut("rule_set"))
-        .and_then(|value| value.as_array_mut())
-    else {
-        return Ok(false);
-    };
-
-    let mut changed = false;
-    let mut found_remote = false;
-
-    for rule_set in rule_sets {
-        let is_remote = rule_set.get("type").and_then(|value| value.as_str()) == Some("remote");
-        if !is_remote {
-            continue;
-        }
-
-        found_remote = true;
-        if let Some(obj) = rule_set.as_object_mut() {
-            match download_detour {
-                Some(detour) => {
-                    if obj.get("download_detour").and_then(|value| value.as_str()) != Some(detour) {
-                        obj.insert(
-                            "download_detour".to_string(),
-                            serde_json::Value::String(detour.to_string()),
-                        );
-                        changed = true;
-                    }
-                }
-                None => {
-                    if obj.remove("download_detour").is_some() {
-                        changed = true;
-                    }
-                }
-            }
-        }
-    }
-
-    if !found_remote {
-        return Ok(false);
-    }
-
-    let updated = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize rule-set bootstrap config: {}", e))?;
-    fs::write(output_path, updated)
-        .map_err(|e| format!("Failed to save rule-set bootstrap config: {}", e))?;
-
-    Ok(changed || found_remote)
-}
-
-fn config_has_remote_rule_sets(config_path: &str) -> bool {
+fn count_remote_rule_sets(config_path: &str) -> usize {
     let Ok(content) = fs::read_to_string(config_path) else {
-        return false;
+        return 0;
     };
     let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
+        return 0;
     };
 
     config
@@ -986,91 +1035,14 @@ fn config_has_remote_rule_sets(config_path: &str) -> bool {
         .and_then(|route| route.get("rule_set"))
         .and_then(|value| value.as_array())
         .map(|rule_sets| {
-            rule_sets.iter().any(|rule_set| {
-                rule_set.get("type").and_then(|value| value.as_str()) == Some("remote")
-            })
-        })
-        .unwrap_or(false)
-}
-
-fn build_bootstrap_config_without_remote_rule_sets(
-    config_path: &str,
-    output_path: &str,
-) -> Result<usize, String> {
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read config for bootstrap fallback: {}", e))?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config for bootstrap fallback: {}", e))?;
-
-    let mut removed_tags: Vec<String> = Vec::new();
-
-    if let Some(rule_sets) = config
-        .get_mut("route")
-        .and_then(|route| route.get_mut("rule_set"))
-        .and_then(|value| value.as_array_mut())
-    {
-        let mut kept = Vec::with_capacity(rule_sets.len());
-        for rule_set in rule_sets.iter() {
-            let is_remote = rule_set.get("type").and_then(|value| value.as_str()) == Some("remote");
-            if is_remote {
-                if let Some(tag) = rule_set.get("tag").and_then(|value| value.as_str()) {
-                    removed_tags.push(tag.to_string());
-                }
-            } else {
-                kept.push(rule_set.clone());
-            }
-        }
-        *rule_sets = kept;
-    }
-
-    if removed_tags.is_empty() {
-        return Ok(0);
-    }
-
-    remove_rules_referencing_rule_sets(config.get_mut("route"), "rules", &removed_tags);
-    remove_rules_referencing_rule_sets(config.get_mut("dns"), "rules", &removed_tags);
-
-    let updated = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize bootstrap fallback config: {}", e))?;
-    fs::write(output_path, updated)
-        .map_err(|e| format!("Failed to save bootstrap fallback config: {}", e))?;
-
-    Ok(removed_tags.len())
-}
-
-fn remove_rules_referencing_rule_sets(
-    parent: Option<&mut serde_json::Value>,
-    rules_key: &str,
-    removed_tags: &[String],
-) {
-    let Some(rules) = parent
-        .and_then(|value| value.get_mut(rules_key))
-        .and_then(|value| value.as_array_mut())
-    else {
-        return;
-    };
-
-    rules.retain(|rule| !rule_references_any_rule_set(rule, removed_tags));
-}
-
-fn rule_references_any_rule_set(rule: &serde_json::Value, removed_tags: &[String]) -> bool {
-    let Some(value) = rule.get("rule_set") else {
-        return false;
-    };
-
-    if let Some(single) = value.as_str() {
-        return removed_tags.iter().any(|tag| tag == single);
-    }
-
-    value
-        .as_array()
-        .map(|items| {
-            items
+            rule_sets
                 .iter()
-                .filter_map(|item| item.as_str())
-                .any(|tag| removed_tags.iter().any(|removed| removed == tag))
+                .filter(|rule_set| {
+                    rule_set.get("type").and_then(|value| value.as_str()) == Some("remote")
+                })
+                .count()
         })
-        .unwrap_or(false)
+        .unwrap_or(0)
 }
 
 fn get_runtime_start_failure_details() -> Result<String, String> {
@@ -1293,6 +1265,13 @@ fn wait_for_mixed_inbound(host: &str, port: u16, timeout: Duration) -> bool {
     false
 }
 
+fn is_tcp_endpoint_open(host: &str, port: u16, timeout: Duration) -> bool {
+    let Ok(address) = format!("{}:{}", host, port).parse() else {
+        return false;
+    };
+    TcpStream::connect_timeout(&address, timeout).is_ok()
+}
+
 fn parse_runtime_log_line(id: usize, line: &str) -> Option<RuntimeLogEntry> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -1373,4 +1352,82 @@ fn config_has_tun_inbound(config_path: &str) -> Result<bool, String> {
                 .any(|inbound| inbound.get("type").and_then(|v| v.as_str()) == Some("tun"))
         })
         .unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aligns_remote_rule_sets_with_selected_outbound() {
+        let mut config = serde_json::json!({
+            "outbounds": [
+                { "type": "selector", "tag": "proxy", "default": "node-a" },
+                { "type": "vless", "tag": "node-a" },
+                { "type": "direct", "tag": "direct" }
+            ],
+            "route": {
+                "rule_set": [
+                    { "type": "remote", "tag": "cn", "download_detour": "direct" },
+                    { "type": "local", "tag": "private", "path": "private.srs" }
+                ]
+            }
+        });
+
+        assert_eq!(detect_runtime_detour_tag(&config).as_deref(), Some("proxy"));
+        assert!(align_runtime_rule_set_detours(&mut config, Some("proxy")));
+        assert_eq!(
+            config["route"]["rule_set"][0]["download_detour"],
+            "proxy"
+        );
+        assert!(config["route"]["rule_set"][1]
+            .get("download_detour")
+            .is_none());
+
+        assert!(align_runtime_rule_set_detours(&mut config, Some("direct")));
+        assert!(config["route"]["rule_set"][0]
+            .get("download_detour")
+            .is_none());
+    }
+
+    #[test]
+    fn migrates_common_legacy_dns_servers_to_v1_12_format() {
+        let mut tcp = serde_json::json!({
+            "tag": "google",
+            "address": "tcp://8.8.8.8:53",
+            "detour": "node-a"
+        });
+        let mut udp = serde_json::json!({
+            "tag": "local",
+            "address": "223.5.5.5"
+        });
+        let mut https = serde_json::json!({
+            "tag": "secure",
+            "address": "https://1.1.1.1/dns-query"
+        });
+
+        assert!(migrate_legacy_dns_server(&mut tcp));
+        assert_eq!(tcp["type"], "tcp");
+        assert_eq!(tcp["server"], "8.8.8.8");
+        assert_eq!(tcp["server_port"], 53);
+        assert_eq!(tcp["detour"], "node-a");
+        assert!(tcp.get("address").is_none());
+
+        assert!(migrate_legacy_dns_server(&mut udp));
+        assert_eq!(udp["type"], "udp");
+        assert_eq!(udp["server"], "223.5.5.5");
+        assert!(udp.get("address").is_none());
+
+        assert!(migrate_legacy_dns_server(&mut https));
+        assert_eq!(https["type"], "https");
+        assert_eq!(https["server"], "1.1.1.1");
+        assert_eq!(https["path"], "/dns-query");
+
+        let mut config = serde_json::json!({
+            "dns": { "servers": [udp] },
+            "outbounds": [{ "type": "direct", "tag": "direct" }]
+        });
+        assert!(!align_runtime_dns_detours(&mut config, Some("direct")));
+        assert!(config["dns"]["servers"][0].get("detour").is_none());
+    }
 }
