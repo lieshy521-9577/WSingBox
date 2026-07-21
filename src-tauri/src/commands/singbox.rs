@@ -13,6 +13,7 @@ struct ProxyStateSnapshot {
     proxy_enable: Option<u32>,
     proxy_server: Option<String>,
     proxy_override: Option<String>,
+    managed_proxy_server: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,14 +69,9 @@ pub fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
 
         if let Ok((host, port)) = get_mixed_inbound_endpoint(&existing_config_path) {
             if is_tcp_endpoint_open(&host, port, Duration::from_millis(350)) {
-                let proxy_applied = set_system_proxy_internal(&host, port)?;
+                set_system_proxy_internal(&host, port)?;
                 let _ = apply_tray_icon(&app_handle, true);
-                let message = if proxy_applied {
-                    "sing-box is already running".to_string()
-                } else {
-                    "sing-box is already running; existing system proxy was left unchanged"
-                        .to_string()
-                };
+                let message = "sing-box is already running".to_string();
                 let _ = app_handle.emit(
                     "core-ready",
                     CoreEventPayload {
@@ -194,11 +190,9 @@ pub fn start_singbox(app_handle: tauri::AppHandle) -> Result<String, String> {
         return Err(message);
     }
 
-    let proxy_applied = set_system_proxy_internal(&proxy_host, proxy_port)?;
+    set_system_proxy_internal(&proxy_host, proxy_port)?;
     let _ = apply_tray_icon(&app_handle, true);
-    let message = if !proxy_applied {
-        "sing-box started; existing system proxy was left unchanged".to_string()
-    } else if tun_enabled {
+    let message = if tun_enabled {
         "sing-box started successfully with TUN elevation".to_string()
     } else if remote_rule_set_count > 0 {
         format!(
@@ -450,13 +444,9 @@ pub async fn clear_runtime_logs() -> Result<String, String> {
     Ok("Runtime logs cleared".to_string())
 }
 
-fn set_system_proxy_internal(host: &str, port: u16) -> Result<bool, String> {
-    save_proxy_state_snapshot()?;
-
+fn set_system_proxy_internal(host: &str, port: u16) -> Result<(), String> {
     let proxy_addr = format!("{}:{}", host, port);
-    if has_external_system_proxy(&proxy_addr) {
-        return Ok(false);
-    }
+    save_proxy_state_snapshot(&proxy_addr)?;
 
     hidden_command("reg")
         .args([
@@ -504,10 +494,10 @@ fn set_system_proxy_internal(host: &str, port: u16) -> Result<bool, String> {
         .ok();
 
     notify_internet_settings_change();
-    Ok(true)
+    Ok(())
 }
 
-fn has_external_system_proxy(target_proxy_addr: &str) -> bool {
+fn is_system_proxy_managed_by_app(target_proxy_addr: &str) -> bool {
     if query_proxy_enable().unwrap_or(0) != 1 {
         return false;
     }
@@ -515,10 +505,12 @@ fn has_external_system_proxy(target_proxy_addr: &str) -> bool {
     query_reg_value("ProxyServer")
         .ok()
         .flatten()
-        .map(|value| {
-            normalize_proxy_server_value(&value) != normalize_proxy_server_value(target_proxy_addr)
-        })
+        .map(|value| proxy_server_values_match(&value, target_proxy_addr))
         .unwrap_or(false)
+}
+
+fn proxy_server_values_match(left: &str, right: &str) -> bool {
+    normalize_proxy_server_value(left) == normalize_proxy_server_value(right)
 }
 
 fn normalize_proxy_server_value(value: &str) -> String {
@@ -552,6 +544,17 @@ fn clear_system_proxy_internal() -> Result<(), String> {
 
 fn restore_system_proxy_internal() -> Result<(), String> {
     if let Some(snapshot) = load_proxy_state_snapshot()? {
+        let can_restore = snapshot
+            .managed_proxy_server
+            .as_deref()
+            .map(is_system_proxy_managed_by_app)
+            .unwrap_or(true);
+
+        if !can_restore {
+            delete_proxy_state_snapshot().ok();
+            return Ok(());
+        }
+
         write_proxy_enable(snapshot.proxy_enable.unwrap_or(0))?;
         write_or_delete_reg_value("ProxyServer", snapshot.proxy_server.as_deref())?;
         write_or_delete_reg_value("ProxyOverride", snapshot.proxy_override.as_deref())?;
@@ -560,11 +563,32 @@ fn restore_system_proxy_internal() -> Result<(), String> {
         return Ok(());
     }
 
-    clear_system_proxy_internal()?;
-    write_or_delete_reg_value("ProxyServer", None)?;
-    write_or_delete_reg_value("ProxyOverride", None)?;
-    notify_internet_settings_change();
+    if let Some(managed_proxy_server) = detect_current_managed_proxy_server() {
+        if is_system_proxy_managed_by_app(&managed_proxy_server) {
+            clear_system_proxy_internal()?;
+            write_or_delete_reg_value("ProxyServer", None)?;
+            write_or_delete_reg_value("ProxyOverride", None)?;
+            notify_internet_settings_change();
+        }
+    }
+
     Ok(())
+}
+
+fn detect_current_managed_proxy_server() -> Option<String> {
+    let state_config_path = core_process::load_core_state()
+        .ok()
+        .flatten()
+        .map(|state| state.config_path);
+    let runtime_config_path = Some(app_paths::runtime_config_path().to_string_lossy().to_string());
+
+    for config_path in [state_config_path, runtime_config_path].into_iter().flatten() {
+        if let Ok((host, port)) = get_mixed_inbound_endpoint(&config_path) {
+            return Some(format!("{}:{}", host, port));
+        }
+    }
+
+    None
 }
 
 fn notify_internet_settings_change() {
@@ -1097,9 +1121,16 @@ fn get_proxy_state_file_path() -> String {
     app_paths::proxy_state_path().to_string_lossy().to_string()
 }
 
-fn save_proxy_state_snapshot() -> Result<(), String> {
+fn save_proxy_state_snapshot(managed_proxy_server: &str) -> Result<(), String> {
     let path = get_proxy_state_file_path();
     if std::path::Path::new(&path).exists() {
+        if let Some(mut snapshot) = load_proxy_state_snapshot()? {
+            snapshot.managed_proxy_server = Some(managed_proxy_server.to_string());
+            let content = serde_json::to_string_pretty(&snapshot)
+                .map_err(|e| format!("Failed to serialize proxy state snapshot: {}", e))?;
+            fs::write(&path, content)
+                .map_err(|e| format!("Failed to save proxy state snapshot: {}", e))?;
+        }
         return Ok(());
     }
 
@@ -1107,6 +1138,7 @@ fn save_proxy_state_snapshot() -> Result<(), String> {
         proxy_enable: query_proxy_enable().ok(),
         proxy_server: query_reg_value("ProxyServer").ok().flatten(),
         proxy_override: query_reg_value("ProxyOverride").ok().flatten(),
+        managed_proxy_server: Some(managed_proxy_server.to_string()),
     };
 
     let content = serde_json::to_string_pretty(&snapshot)

@@ -1,6 +1,6 @@
 [package]
 name = "singbox-client"
-version = "1.4.0"
+version = "1.4.1"
 description = "A sing-box GUI client for Windows"
 authors = ["you"]
 edition = "2021"

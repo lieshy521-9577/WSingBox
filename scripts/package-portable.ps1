@@ -1,14 +1,18 @@
 param(
-  [string]$Version = "1.4.0"
+  [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $Version = (Get-Content -Raw -Path (Join-Path $repoRoot "package.json") | ConvertFrom-Json).version
+}
 
 # Normalize: strip leading "v" so artifact filenames stay consistent with
 # Tauri's NSIS output (which uses the raw version from tauri.conf.json).
 $Version = $Version -replace '^v', ''
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
 $releaseDir = Join-Path $repoRoot "src-tauri\target\release"
 $portableRoot = Join-Path $repoRoot "src-tauri\target\release\bundle\portable"
 $appDir = Join-Path $portableRoot "SingBox-Client"
