@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Normalize: strip leading "v" so artifact filenames stay consistent with
+# Tauri's NSIS output (which uses the raw version from tauri.conf.json).
+$Version = $Version -replace '^v', ''
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $releaseDir = Join-Path $repoRoot "src-tauri\target\release"
 $portableRoot = Join-Path $repoRoot "src-tauri\target\release\bundle\portable"

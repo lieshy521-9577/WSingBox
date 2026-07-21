@@ -6,6 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+# Normalize: strip leading "v" for filenames (Tauri NSIS output uses raw version),
+# keep "v" only for git tag / release title.
+$ver = $Version -replace '^v', ''
+if ($ver -ne $Version) {
+  Write-Host "Note: using '$ver' for artifact filenames (git tag will be 'v$ver')" -ForegroundColor DarkGray
+}
+
 Write-Host "=== Building frontend ===" -ForegroundColor Cyan
 Push-Location $repoRoot
 npm run build
@@ -19,12 +26,12 @@ if ($LASTEXITCODE -ne 0) { throw "Tauri build failed" }
 Pop-Location
 
 Write-Host "=== Building portable ZIP ===" -ForegroundColor Cyan
-powershell -ExecutionPolicy Bypass -File "$repoRoot\scripts\package-portable.ps1" -Version $Version
+powershell -ExecutionPolicy Bypass -File "$repoRoot\scripts\package-portable.ps1" -Version $ver
 if ($LASTEXITCODE -ne 0) { throw "Portable packaging failed" }
 
 Write-Host "=== Generating SHA-256 ===" -ForegroundColor Cyan
-$nsisPath = "$repoRoot\src-tauri\target\release\bundle\nsis\SingBox Client_${Version}_x64-setup.exe"
-$portablePath = "$repoRoot\src-tauri\target\release\bundle\portable\SingBox-Client_${Version}_x64-portable.zip"
+$nsisPath = "$repoRoot\src-tauri\target\release\bundle\nsis\SingBox Client_${ver}_x64-setup.exe"
+$portablePath = "$repoRoot\src-tauri\target\release\bundle\portable\SingBox-Client_${ver}_x64-portable.zip"
 
 if (-not (Test-Path $nsisPath)) { throw "NSIS installer not found: $nsisPath" }
 if (-not (Test-Path $portablePath)) { throw "Portable zip not found: $portablePath" }
