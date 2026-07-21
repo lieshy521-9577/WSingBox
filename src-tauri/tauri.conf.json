@@ -1,6 +1,6 @@
 {
   "productName": "SingBox Client",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "identifier": "com.singbox.client",
   "build": {
     "beforeDevCommand": "npm run dev",
