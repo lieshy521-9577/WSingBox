@@ -738,15 +738,10 @@ fn align_runtime_dns_detours(
 
 fn align_runtime_rule_set_detours(
     config: &mut serde_json::Value,
-    selected_outbound: Option<&str>,
+    _selected_outbound: Option<&str>,
 ) -> bool {
     let outbound_tags = collect_outbound_tags(config);
-    let direct_selected = selected_outbound == Some("direct");
-    let preferred_detour = selected_outbound
-        .filter(|tag| {
-            *tag != "direct" && *tag != "block" && outbound_tags.contains(*tag)
-        })
-        .map(str::to_string);
+    let has_direct = outbound_tags.contains("direct");
     let Some(rule_sets) = config
         .get_mut("route")
         .and_then(|route| route.get_mut("rule_set"))
@@ -764,33 +759,24 @@ fn align_runtime_rule_set_detours(
             continue;
         };
 
-        let existing_detour = obj
+        if has_direct {
+            if obj.get("download_detour").and_then(|value| value.as_str()) != Some("direct") {
+                obj.insert(
+                    "download_detour".to_string(),
+                    serde_json::Value::String("direct".to_string()),
+                );
+                changed = true;
+            }
+            continue;
+        }
+
+        let invalid_detour = obj
             .get("download_detour")
             .and_then(|value| value.as_str())
-            .filter(|tag| {
-                *tag != "direct" && *tag != "block" && outbound_tags.contains(*tag)
-            })
-            .map(str::to_string);
-        let detour = if direct_selected {
-            None
-        } else {
-            preferred_detour.clone().or(existing_detour)
-        };
-        match detour {
-            Some(detour) => {
-                if obj.get("download_detour").and_then(|value| value.as_str())
-                    != Some(detour.as_str())
-                {
-                    obj.insert(
-                        "download_detour".to_string(),
-                        serde_json::Value::String(detour),
-                    );
-                    changed = true;
-                }
-            }
-            None => {
-                changed |= obj.remove("download_detour").is_some();
-            }
+            .map(|tag| tag == "block" || !outbound_tags.contains(tag))
+            .unwrap_or(false);
+        if invalid_detour {
+            changed |= obj.remove("download_detour").is_some();
         }
     }
 
@@ -1391,7 +1377,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aligns_remote_rule_sets_with_selected_outbound() {
+    fn keeps_remote_rule_sets_on_direct_detour() {
         let mut config = serde_json::json!({
             "outbounds": [
                 { "type": "selector", "tag": "proxy", "default": "node-a" },
@@ -1400,7 +1386,7 @@ mod tests {
             ],
             "route": {
                 "rule_set": [
-                    { "type": "remote", "tag": "cn", "download_detour": "direct" },
+                    { "type": "remote", "tag": "cn", "download_detour": "proxy" },
                     { "type": "local", "tag": "private", "path": "private.srs" }
                 ]
             }
@@ -1410,16 +1396,17 @@ mod tests {
         assert!(align_runtime_rule_set_detours(&mut config, Some("proxy")));
         assert_eq!(
             config["route"]["rule_set"][0]["download_detour"],
-            "proxy"
+            "direct"
         );
         assert!(config["route"]["rule_set"][1]
             .get("download_detour")
             .is_none());
 
-        assert!(align_runtime_rule_set_detours(&mut config, Some("direct")));
-        assert!(config["route"]["rule_set"][0]
-            .get("download_detour")
-            .is_none());
+        assert!(!align_runtime_rule_set_detours(&mut config, Some("direct")));
+        assert_eq!(
+            config["route"]["rule_set"][0]["download_detour"],
+            "direct"
+        );
     }
 
     #[test]

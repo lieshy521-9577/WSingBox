@@ -151,4 +151,21 @@ Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "  1. git add -A && git commit -m 'release: v$ver'"
 Write-Host "  2. git tag v$ver"
 Write-Host "  3. git push origin main --tags"
-Write-Host "  4. gh release create v$ver '$nsisPath' '$portablePath' --title 'v$ver' --generate-notes"
+
+$gh = Get-Command gh -ErrorAction SilentlyContinue
+if ($gh) {
+  Write-Host "  4. gh release create v$ver '$nsisPath' '$portablePath' --title 'v$ver' --generate-notes"
+} else {
+  $remoteUrl = git -C $repoRoot remote get-url origin 2>$null
+  $releaseUrl = "GitHub repository Releases page"
+  if ($remoteUrl -match 'github\.com[:/]([^/]+/[^/.]+)(\.git)?$') {
+    $releaseUrl = "https://github.com/$($Matches[1])/releases/new?tag=v$ver&title=v$ver"
+  }
+
+  Write-Host "  4. GitHub CLI was not found. Create the release in the browser:"
+  Write-Host "     $releaseUrl"
+  Write-Host "     Upload:"
+  Write-Host "     $nsisPath"
+  Write-Host "     $portablePath"
+  Write-Host "     $hashFile"
+}
